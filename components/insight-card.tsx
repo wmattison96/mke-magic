@@ -12,7 +12,7 @@ export function InsightCard({ eyebrow, title, detail, icon, tone }: { eyebrow: s
 
 export function InsightsPanel({ limit = 3 }: { limit?: number }) {
   const insights = [
-    { eyebrow: "MOST CONSISTENT", title: "Rowan is on a 3-game win streak", detail: "Muldrotha has taken the last three games Rowan played.", icon: "↗", tone: "violet" },
+    { eyebrow: "MOST CONSISTENT", title: "Will is on a 3-game win streak", detail: "Muldrotha has taken the last three games Will played.", icon: "↗", tone: "violet" },
     { eyebrow: "TABLE TALK", title: "Long games favor blue decks", detail: "Games over 90 minutes have a higher Izzet win rate.", icon: "◷", tone: "blue" },
     { eyebrow: "NEW RECORD", title: "October was your biggest month", detail: "35 games played, up 21% from September.", icon: "✳", tone: "amber" },
   ];

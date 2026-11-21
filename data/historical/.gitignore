@@ -1,0 +1,5 @@
+# The historical snapshot contains private original guest names.
+# Keep all input data LOCAL and out of Git, including the staging SQLite.
+*
+!.gitignore
+!README.md

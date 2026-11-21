@@ -6,7 +6,10 @@
     "dev": "WATCHPACK_POLLING=true next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "historical:check": "node --experimental-strip-types scripts/historical-check.mjs"
   },
   "dependencies": {
     "next": "16.4.6",

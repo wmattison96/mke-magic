@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { GamesTrendChart, WinRatePanel } from "@/components/dashboard/charts";
 import { RecentGamesTable } from "@/components/dashboard/tables";
-import { Badge, PageHeading, PlayerAvatar, StatCard } from "@/components/ui";
+import { Badge, PlayerAvatar, StatCard } from "@/components/ui";
 import { players } from "@/data/demo-data";
 
 export function generateStaticParams() { return players.map(({ slug }) => ({ slug })); }
