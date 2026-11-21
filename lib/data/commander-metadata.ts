@@ -1,5 +1,5 @@
 import "server-only";
-import type { CommanderMetadata, ProfileDeck } from "@/lib/stats/profiles";
+import { combineCommanderColorIdentities, type ColorIdentity, type CommanderMetadata, type ProfileDeck } from "@/lib/stats/profiles";
 
 interface ScryfallCard {
   name?: string;
@@ -13,9 +13,10 @@ let lastRequestAt = 0;
 
 function pacedRequest(url: URL): Promise<Response | null> {
   const request = requestQueue.then(async () => {
-    const waitMs = Math.max(0, 125 - (Date.now() - lastRequestAt));
+    const now = performance.now();
+    const waitMs = Math.max(0, 125 - (now - lastRequestAt));
     if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
-    lastRequestAt = Date.now();
+    lastRequestAt = performance.now();
     try {
       return await fetch(url, {
         cache: "force-cache",
@@ -55,6 +56,13 @@ function artwork(card: ScryfallCard | null): string | null {
     ?? null;
 }
 
+function verifiedColors(card: ScryfallCard): ColorIdentity[] | null {
+  const colors = card.color_identity;
+  if (!Array.isArray(colors)) return null;
+  if (colors.some((color) => !["W", "U", "B", "R", "G"].includes(color))) return null;
+  return colors as ColorIdentity[];
+}
+
 /**
  * Looks up only commander identities already stored in the public registry.
  * Pair color identities are unioned; an unresolved partner leaves colors
@@ -74,8 +82,7 @@ export async function getCommanderMetadata(decks: ProfileDeck[]): Promise<Map<st
       cards.push(card);
     }
     const colors = cards.length === names.length && cards.length > 0
-      ? [...new Set(cards.flatMap((card) => card.color_identity ?? []))]
-        .filter((color): color is "W" | "U" | "B" | "R" | "G" => ["W", "U", "B", "R", "G"].includes(color))
+      ? combineCommanderColorIdentities(cards.map(verifiedColors))
       : null;
     result.set(commander.id, { colors, artUrl: artwork(cards[0] ?? null) });
   }

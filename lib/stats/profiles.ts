@@ -1,4 +1,5 @@
 import { getEligibility } from "../historical/model.ts";
+import { calculateDeckOpponentMatchups, calculatePlayerSharedMatchups } from "./matchups.ts";
 import {
   calculateEloHistory,
   DEFAULT_PROVISIONAL_ELO_CONFIG,
@@ -36,6 +37,16 @@ export interface CommanderMetadata {
 }
 
 export type CommanderMetadataById = ReadonlyMap<string, CommanderMetadata>;
+
+/** Combines commander or partner identities while preserving unknown metadata as unknown. */
+export function combineCommanderColorIdentities(
+  identities: Array<readonly ColorIdentity[] | null>,
+): ColorIdentity[] | null {
+  if (!identities.length || identities.some((identity) => identity === null)) return null;
+  const union = new Set(identities.flatMap((identity) => identity ?? []));
+  const order: ColorIdentity[] = ["W", "U", "B", "R", "G", "C"];
+  return order.filter((color) => union.has(color));
+}
 
 export interface EligibleTotals {
   recordedAppearances: number;
@@ -101,6 +112,7 @@ export interface OpponentDeckMatchupStat {
   sharedGames: number;
   wins: number;
   winRate: number;
+  gameIds: string[];
 }
 
 export interface RecentProfileGame {
@@ -505,6 +517,7 @@ export function buildProfileStatistics(
     };
   });
   const playerRanks = getRankings(playerRowsWithoutRank.map(({ player, totals }) => ({ id: player.id, ...totals })));
+  const playerSharedMatchups = calculatePlayerSharedMatchups(winGames, registeredPlayers);
 
   const playerStats = new Map<string, PlayerProfileStats>();
   for (const { player, recordedGames, participatingGames, eligibleGames, totals } of playerRowsWithoutRank) {
@@ -540,37 +553,31 @@ export function buildProfileStatistics(
       b.participationEligibleAppearances - a.participationEligibleAppearances || a.name.localeCompare(b.name));
     const deckColorWeights = new Map(playedDecks.map((deck) => [deck.id, 1]));
     const gameColorWeights = new Map(deckCountsForPlayer);
-    const opponentCounts = new Map<string, { sharedGames: number; wins: number }>();
-    const opponentDeckCounts = new Map<string, { sharedGames: number; wins: number }>();
+    const opponentDeckCounts = new Map<string, { sharedGames: number; wins: number; gameIds: string[] }>();
     for (const game of eligibleGames) {
       const self = game.participants.find((participant) => participant.playerId === player.id);
       if (!self) continue;
       const playerWon = self.seat === game.winningSeat;
-      const seenOpponentPlayers = new Set<string>();
       const seenOpponentDecks = new Set<string>();
       for (const opponent of game.participants) {
-        if (opponent.playerId && opponent.playerId !== player.id && !seenOpponentPlayers.has(opponent.playerId)) {
-          seenOpponentPlayers.add(opponent.playerId);
-          const counts = opponentCounts.get(opponent.playerId) ?? { sharedGames: 0, wins: 0 };
-          counts.sharedGames += 1;
-          if (playerWon) counts.wins += 1;
-          opponentCounts.set(opponent.playerId, counts);
-        }
         if (!opponent.deckId || seenOpponentDecks.has(opponent.deckId)) continue;
         const opponentDeck = deckCatalog.get(opponent.deckId);
         if (!opponentDeck || opponentDeck.ownerId === player.id) continue;
         seenOpponentDecks.add(opponent.deckId);
-        const counts = opponentDeckCounts.get(opponent.deckId) ?? { sharedGames: 0, wins: 0 };
+        const counts = opponentDeckCounts.get(opponent.deckId) ?? { sharedGames: 0, wins: 0, gameIds: [] };
         counts.sharedGames += 1;
         if (playerWon) counts.wins += 1;
+        counts.gameIds.push(game.id);
         opponentDeckCounts.set(opponent.deckId, counts);
       }
     }
-    const opponentRows = [...opponentCounts.entries()].flatMap(([opponentId, counts]) => {
-      const opponent = playersById.get(opponentId);
-      if (!opponent) return [];
-      return [{ playerId: opponentId, name: opponent.name, ...counts, winRate: counts.sharedGames ? counts.wins / counts.sharedGames : 0 }];
-    }).sort((a, b) => b.sharedGames - a.sharedGames || a.name.localeCompare(b.name));
+    const opponentRows = playerSharedMatchups.filter((row) => row.playerId === player.id).map((row) => ({
+      playerId: row.opponentId,
+      name: row.opponentName,
+      sharedGames: row.sharedGames,
+      wins: row.wins,
+      winRate: row.winRate,
+    })).sort((a, b) => b.sharedGames - a.sharedGames || a.name.localeCompare(b.name));
     const opponentDeckRows: OpponentDeckMatchupStat[] = [...opponentDeckCounts.entries()].flatMap(([deckId, counts]) => {
       const deck = deckCatalog.get(deckId);
       if (!deck) return [];
@@ -583,6 +590,7 @@ export function buildProfileStatistics(
         sharedGames: counts.sharedGames,
         wins: counts.wins,
         winRate: counts.wins / counts.sharedGames,
+        gameIds: counts.gameIds,
       }];
     });
     const matchupRankings = rankOpponentDeckMatchups(opponentDeckRows, {
@@ -647,7 +655,6 @@ export function buildProfileStatistics(
   }));
   const quadrantThreshold = getDeckQuadrantThreshold(quadrantPoints, podFilter);
   for (const deck of registeredDecks) {
-    const opponentDeckCounts = new Map<string, { sharedGames: number; wins: number }>();
     const recordedGames = podGames.filter((game) => game.participants.some((participant) => participant.deckId === deck.id));
     const eligibleGames = winGames.filter((game) => game.participants.some((participant) => participant.deckId === deck.id));
     const trend: ProfileTrendPoint[] = [];
@@ -665,36 +672,12 @@ export function buildProfileStatistics(
         wins: cumulativeWins,
         winRate: cumulativeWins / (index + 1),
       });
-      const seenOpponentDecks = new Set<string>();
-      for (const opponent of game.participants) {
-        if (!opponent.deckId || opponent.deckId === deck.id || seenOpponentDecks.has(opponent.deckId)) continue;
-        const opponentDeck = deckCatalog.get(opponent.deckId);
-        if (!opponentDeck) continue;
-        seenOpponentDecks.add(opponent.deckId);
-        const counts = opponentDeckCounts.get(opponent.deckId) ?? { sharedGames: 0, wins: 0 };
-        counts.sharedGames += 1;
-        if (self.seat === game.winningSeat) counts.wins += 1;
-        opponentDeckCounts.set(opponent.deckId, counts);
-      }
     }
     const counts = deckStats.get(deck.id)!;
     const owner = playersById.get(deck.ownerId) ?? null;
     const seats = makeSeats(podGames, maximumSeat, (_playerId, deckId) => deckId === deck.id);
     const totalSeatAppearances = seats.reduce((sum, seat) => sum + seat.participationEligibleAppearances, 0);
-    const opponentDeckRows: OpponentDeckMatchupStat[] = [...opponentDeckCounts.entries()].flatMap(([deckId, deckCounts]) => {
-      const opponentDeck = deckCatalog.get(deckId);
-      if (!opponentDeck) return [];
-      return [{
-        deckId,
-        ownerId: opponentDeck.ownerId,
-        ownerName: opponentDeck.ownerName,
-        name: opponentDeck.name,
-        commanderName: opponentDeck.commanderName,
-        sharedGames: deckCounts.sharedGames,
-        wins: deckCounts.wins,
-        winRate: deckCounts.wins / deckCounts.sharedGames,
-      }];
-    });
+    const opponentDeckRows = calculateDeckOpponentMatchups(deck.id, eligibleGames, deckCatalog);
     const matchupRankings = rankOpponentDeckMatchups(opponentDeckRows, {
       minimumSharedGames: DECK_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES,
       mostFacedLimit: 5,

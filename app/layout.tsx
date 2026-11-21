@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Mana Table | Playgroup Analytics",
-  description: "A clear view of the players, decks, and games in your Magic: The Gathering playgroup.",
+  title: "MKE Magic | Playgroup Analytics",
+  description: "MKE Magic gives your Magic: The Gathering playgroup a clear view of its players, decks, and games.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

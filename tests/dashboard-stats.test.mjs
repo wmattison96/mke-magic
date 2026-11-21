@@ -104,7 +104,8 @@ test("Rolling ranges include both boundary dates and all panels filter from the 
 test("Provisional multiplayer Elo is zero-sum and rewards a later winner seat slightly more", () => {
   assert.deepEqual(DEFAULT_PROVISIONAL_ELO_CONFIG, {
     startingRating: 1000,
-    kFactor: 24,
+    playerKFactor: 8,
+    deckKFactor: 24,
     seatOrderAdjustmentPerPosition: 0.03,
     minimumSeatFactor: 0.9,
     maximumSeatFactor: 1.1,
@@ -115,6 +116,8 @@ test("Provisional multiplayer Elo is zero-sum and rewards a later winner seat sl
   assert.ok(Math.abs(seatFour.reduce((sum, value) => sum + value, 0)) < 1e-10);
   assert.ok(seatFour[3] > seatOne[0]);
   assert.equal(seatFour.length, 4);
+  const deckSeatFour = calculateMultiplayerEloDeltas([1000, 1000, 1000, 1000], 4, DEFAULT_PROVISIONAL_ELO_CONFIG, "deck");
+  assert.ok(Math.abs(deckSeatFour[3] / seatFour[3] - 3) < 1e-12, "Deck K remains 24 while Player K is 8.");
 });
 
 test("Dashboard player performance displays require 10 games in the selected window", () => {
@@ -171,6 +174,7 @@ test("Deck rankings include five-game decks and omit four-game decks", () => {
   assert.deepEqual(stats.topDecksByWinRate.map((deck) => [deck.id, deck.games]), [["ranked-deck", 5]]);
   assert.deepEqual(stats.topDecksByElo.map((deck) => [deck.id, deck.games]), [["ranked-deck", 5]]);
   assert.equal(getSiteToday(new Date("2026-11-21T05:30:00Z")), "2026-11-20", "The date boundary follows America/Chicago rather than UTC.");
+  assert.equal(getSiteToday(new Date("2026-11-21T06:30:00Z")), "2026-11-21", "The Chicago local date advances after local midnight.");
 });
 
 test("Historical CSV baseline reconciles independently with Dashboard counts and member win rates", async () => {
@@ -248,14 +252,14 @@ test("Historical CSV baseline reconciles independently with Dashboard counts and
   assert.equal(dashboard.activePlayers, [...independentPlayers.values()].filter((entry) => entry.games > 0).length);
   assert.equal(dashboard.uniqueDecksPlayed, independentDecks.size);
   assert.deepEqual(Object.fromEntries(dashboard.playerLeaderboard.map((player) => [player.name, player.elo])), {
-    Nelson: 1020,
-    Will: 990,
-    Manfred: 993,
-    Josh: 967,
-    Sam: 1003,
-  }, "Default Elo outputs must match the previously validated historical ratings.");
+    Nelson: 1008,
+    Will: 1002,
+    Manfred: 995,
+    Josh: 984,
+    Sam: 1001,
+  }, "K=8 Elo outputs match the historical simulation reference.");
   assert.deepEqual(dashboard.playersByWinRate.map((player) => player.name), ["Will", "Nelson", "Manfred", "Josh"]);
-  assert.deepEqual(dashboard.playerEloRankings.map((player) => player.name), ["Nelson", "Manfred", "Will", "Josh"]);
+  assert.deepEqual(dashboard.playerEloRankings.map((player) => player.name), ["Nelson", "Will", "Manfred", "Josh"]);
   assert.equal(dashboard.activePlayers, 5, "Sam remains included in Active Players with only three eligible games.");
   assert.equal(dashboard.playerLeaderboard.find((player) => player.name === "Sam")?.games, 3, "Sam’s underlying stats remain available.");
   for (const player of dashboard.playerLeaderboard) {

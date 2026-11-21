@@ -95,16 +95,18 @@ export interface DashboardStats {
 
 export interface ProvisionalEloConfig {
   startingRating: number;
-  kFactor: number;
+  playerKFactor: number;
+  deckKFactor: number;
   seatOrderAdjustmentPerPosition: number;
   minimumSeatFactor: number;
   maximumSeatFactor: number;
 }
 
-/** Defaults from the approved provisional formula; override only for simulations. */
+/** Centralized Elo settings; identity-specific K-factors can be varied in simulations. */
 export const DEFAULT_PROVISIONAL_ELO_CONFIG: Readonly<ProvisionalEloConfig> = Object.freeze({
   startingRating: 1000,
-  kFactor: 24,
+  playerKFactor: 8,
+  deckKFactor: 24,
   seatOrderAdjustmentPerPosition: 0.03,
   minimumSeatFactor: 0.9,
   maximumSeatFactor: 1.1,
@@ -165,6 +167,7 @@ export function calculateMultiplayerEloDeltas(
   ratings: number[],
   winnerSeat: number,
   config: Readonly<ProvisionalEloConfig> = DEFAULT_PROVISIONAL_ELO_CONFIG,
+  identity: "player" | "deck" = "player",
 ): number[] {
   const podSize = ratings.length;
   if (podSize < 2 || !Number.isInteger(winnerSeat) || winnerSeat < 1 || winnerSeat > podSize) {
@@ -183,7 +186,8 @@ export function calculateMultiplayerEloDeltas(
       const expectation = 1 / (1 + 10 ** ((ratings[opponentIndex] - rating) / 400));
       pairwiseResult += score - expectation;
     }
-    return (config.kFactor / (podSize - 1)) * pairwiseResult;
+    const kFactor = identity === "player" ? config.playerKFactor : config.deckKFactor;
+    return (kFactor / (podSize - 1)) * pairwiseResult;
   });
 
   const winnerIndex = winnerSeat - 1;
@@ -221,7 +225,7 @@ export interface EloHistoryResult extends EloResult {
   history: Map<string, EloHistoryPoint[]>;
 }
 
-/** Shared chronological Elo engine used by Dashboard and profile time series. */
+/** Shared chronological Elo engine used throughout Dashboard, profiles, and Analytics. */
 export function calculateEloHistory(
   games: StatsGame[],
   identity: "player" | "deck",
@@ -240,7 +244,7 @@ export function calculateEloHistory(
     if (!winner) continue;
     const ids = game.participants.map((participant) => identity === "player" ? participant.playerId : participant.deckId);
     const seatRatings = ids.map((id) => id ? ratings.get(id) ?? config.startingRating : config.startingRating);
-    const deltas = calculateMultiplayerEloDeltas(seatRatings, winner.seat, config);
+    const deltas = calculateMultiplayerEloDeltas(seatRatings, winner.seat, config, identity);
     const updates = new Map<string, number>();
     for (let index = 0; index < ids.length; index += 1) {
       const id = ids[index];

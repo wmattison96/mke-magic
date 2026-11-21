@@ -26,11 +26,11 @@ function NavIcon({ name }: { name: string }) {
 }
 
 function Brand() {
-  return <Link className="flex items-center gap-3 px-1" href="/" aria-label="Mana Table dashboard">
+  return <Link className="flex items-center gap-3 px-1" href="/" aria-label="MKE Magic dashboard">
     <span className="grid size-10 place-items-center rounded-xl bg-indigo-500 text-white shadow-lg shadow-indigo-950/40">
       <svg viewBox="0 0 32 32" className="size-6" aria-hidden="true"><path d="M5 24V8h4l7 9 7-9h4v16h-5v-8l-6 7-6-7v8z" fill="currentColor"/></svg>
     </span>
-    <span><span className="block text-[15px] font-semibold tracking-wide text-white">mana table</span><span className="block text-[10px] font-medium uppercase tracking-[.18em] text-slate-500">playgroup analytics</span></span>
+    <span><span className="block text-[15px] font-semibold tracking-wide text-slate-900 lg:text-white">MKE Magic</span><span className="block text-[10px] font-medium uppercase tracking-[.18em] text-slate-500">playgroup analytics</span></span>
   </Link>;
 }
 
@@ -47,7 +47,7 @@ function Navigation({ activePath, mobile = false }: { activePath: string; mobile
 }
 
 export function AppShell({ children, activePath }: { children: ReactNode; activePath: string }) {
-  const usesLiveRecords = activePath === "/" || activePath === "/games" || activePath === "/tracking" || activePath === "/players" || activePath === "/decks";
+  const usesLiveRecords = activePath === "/" || activePath === "/games" || activePath === "/tracking" || activePath === "/players" || activePath === "/decks" || activePath === "/analytics";
   const recordScope = activePath === "/" ? "Eligible 4-player statistics" : "All recorded pods";
   return <div className="min-h-screen bg-[#f4f6fa] text-slate-900 lg:flex">
     <aside className="hidden w-[250px] shrink-0 flex-col border-r border-slate-800 bg-[#111827] px-5 py-6 lg:sticky lg:top-0 lg:flex lg:h-screen">

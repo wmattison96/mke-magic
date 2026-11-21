@@ -11,12 +11,12 @@ export function SiteHeader() {
   return (
     <header className="border-b border-white/8 bg-slate-950/75">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
-        <a href="#dashboard" className="flex items-center gap-3" aria-label="Mana Table home">
+        <a href="#dashboard" className="flex items-center gap-3" aria-label="MKE Magic home">
           <span className="grid size-10 place-items-center rounded-xl border border-emerald-300/20 bg-emerald-300/10 text-lg font-semibold text-emerald-200">
             M
           </span>
           <span>
-            <span className="block text-sm font-semibold tracking-wide text-slate-100">MANA TABLE</span>
+            <span className="block text-sm font-semibold tracking-wide text-slate-100">MKE MAGIC</span>
             <span className="block text-[10px] font-medium tracking-[0.22em] text-slate-500">PLAYGROUP TRACKER</span>
           </span>
         </a>
