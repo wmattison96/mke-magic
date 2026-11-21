@@ -2,6 +2,7 @@
   "name": "mtg-playgroup",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "WATCHPACK_POLLING=true next dev --webpack",
     "build": "next build --webpack",
@@ -9,9 +10,15 @@
     "lint": "eslint",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit",
-    "historical:check": "node --experimental-strip-types scripts/historical-check.mjs"
+    "historical:check": "node --experimental-strip-types scripts/historical-check.mjs",
+    "historical:import": "node --experimental-strip-types --env-file-if-exists=.env.local scripts/import-historical.mjs",
+    "database:verify": "node --experimental-strip-types --env-file-if-exists=.env.local scripts/verify-hosted-database.mjs",
+    "database:test:m3": "node --experimental-strip-types --env-file-if-exists=.env.local scripts/test-milestone-3-hosted.mjs",
+    "dashboard:baseline": "node --experimental-strip-types scripts/check-dashboard-baseline.mjs"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.119.2",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0"
@@ -23,6 +30,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "pg": "^8.23.1",
     "tailwindcss": "4.3.3",
     "typescript": "^5"
   }

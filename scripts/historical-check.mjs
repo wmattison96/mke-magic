@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCsv } from "../lib/historical/csv.mts";
-import { getEligibility, validateHistoricalGame } from "../lib/historical/model.mts";
+import { getEligibility, validateHistoricalGame } from "../lib/historical/model.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dataDir = resolve(root, "data/historical");
@@ -220,7 +220,7 @@ async function main() {
   for (const [key, value] of Object.entries(totals)) console.log(`  ${key}: ${value}`);
   console.log("  pod_sizes: 3P=9, 4P=123, 5P=8, 6P=1");
   console.log(`  eligible_guest_winner_games: ${guestWinningEligibleGames.length}`);
-  console.log("Import plan (not executed): players 6 → commanders 126 → member decks 61 → games 141 → seats 565 → private alias/provenance records 204.");
+  console.log("Import plan (not executed): players 6 → commanders 126 → member decks 61 → games 141 → seats 565 → 204 private aliases and 141 private game provenance rows.");
 
   const samples = [importedGames[0], importedGames[Math.floor(importedGames.length / 2)], importedGames.at(-1)];
   console.log("Safe game samples (member/Guest labels only; original guest names omitted):");

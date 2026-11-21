@@ -1,4 +1,4 @@
--- Milestone 1 schema only. This migration is intentionally not applied to a hosted database.
+-- Milestone 1 historical schema and safe public projections. Apply with Supabase CLI.
 -- Import guest/original source values only into private provenance; public views emit Guest.
 
 begin;
@@ -11,9 +11,13 @@ create table public.players (
   id uuid primary key default gen_random_uuid(),
   historical_player_key text not null unique,
   display_name text not null check (length(btrim(display_name)) > 0),
+  moxfield_url text,
   created_at timestamptz not null default now(),
   constraint players_approved_historical_key check (
     historical_player_key in ('nelson', 'will', 'manfred', 'josh', 'sam', 'keenan')
+  ),
+  constraint players_moxfield_http_url check (
+    moxfield_url is null or moxfield_url ~ '^https?://'
   )
 );
 
@@ -50,12 +54,20 @@ create table public.games (
   winning_seat smallint,
   source text not null check (source in ('spreadsheet', 'manual', 'play')),
   date_origin text not null check (date_origin in ('explicit', 'carried_forward', 'manual')),
+  created_by uuid references auth.users(id) on delete set null default auth.uid(),
   public_notes text,
   created_at timestamptz not null default now(),
   constraint games_date_sequence_unique unique (played_on, game_number_on_date),
   constraint games_winner_shape check (
     (result_type = 'single_winner' and winning_seat is not null and winning_seat between 1 and pod_size)
     or (result_type <> 'single_winner' and winning_seat is null)
+  ),
+  constraint games_manual_single_winner check (
+    source = 'spreadsheet' or (result_type = 'single_winner' and winning_seat is not null)
+  ),
+  constraint games_source_date_origin check (
+    (source = 'spreadsheet' and date_origin in ('explicit', 'carried_forward'))
+    or (source in ('manual', 'play') and date_origin = 'manual')
   )
 );
 
@@ -119,21 +131,25 @@ create table private.historical_game_provenance (
   source_game_id text not null unique,
   source_sheet_row text,
   original_winner_description text,
+  exception_reference jsonb not null default '{}'::jsonb,
   raw_game_row jsonb not null,
   raw_participant_rows jsonb not null,
   original_guest_names jsonb not null default '[]'::jsonb,
   original_commander_labels jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now()
 );
+create index historical_game_provenance_game_idx on private.historical_game_provenance(game_id) where game_id is not null;
 
 create table private.commander_alias_provenance (
   id uuid primary key default gen_random_uuid(),
   import_batch_id uuid not null references private.import_batches(id) on delete restrict,
   commander_id uuid not null references public.commanders(id) on delete restrict,
+  source_alias_hash text not null check (source_alias_hash ~ '^[0-9a-f]{64}$'),
   source_alias jsonb not null,
   reviewed_canonical_name text not null,
   review_id text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint commander_alias_provenance_hash_unique unique (source_alias_hash)
 );
 
 create or replace function private.is_approved_member()
@@ -142,6 +158,7 @@ language sql
 stable
 security definer
 set search_path = ''
+set row_security = off
 as $$
   select exists (
     select 1
@@ -158,6 +175,7 @@ language sql
 stable
 security definer
 set search_path = ''
+set row_security = off
 as $$
   select exists (
     select 1
@@ -190,20 +208,20 @@ create policy member_decks_public_read on public.member_decks for select to anon
 create policy games_public_read on public.games for select to anon, authenticated using (true);
 create policy game_participants_public_read on public.game_participants for select to anon, authenticated using (true);
 
--- No direct browser writes in Milestone 1. Future write policies belong in a later milestone.
+-- No direct browser writes in the baseline schema; Prompt 2 adds narrowly scoped policies.
 revoke all on table public.players, public.commanders, public.member_decks, public.games, public.game_participants from public, anon, authenticated;
 revoke all on all tables in schema private from public, anon, authenticated;
 grant all on all tables in schema private to service_role;
 
 -- Grant only fields needed to build safe projections. Stable import IDs and raw provenance stay hidden.
-grant select (id, display_name) on public.players to anon, authenticated;
+grant select (id, display_name, moxfield_url) on public.players to anon, authenticated;
 grant select (id, canonical_name) on public.commanders to anon, authenticated;
 grant select (id, owner_player_id, commander_id, display_name, moxfield_url) on public.member_decks to anon, authenticated;
 grant select (id, played_on, game_number_on_date, pod_size, member_count, result_type, winning_seat, source, date_origin, public_notes, created_at) on public.games to anon, authenticated;
 grant select (game_id, seat, participant_type, player_id, deck_id, commander_id) on public.game_participants to anon, authenticated;
 
 create view public.readable_players with (security_invoker = true) as
-  select id, display_name from public.players;
+  select id, display_name, moxfield_url from public.players;
 
 create view public.readable_commanders with (security_invoker = true) as
   select id, canonical_name from public.commanders;
@@ -226,7 +244,7 @@ create view public.readable_game_participants with (security_invoker = true) as
          case when gp.participant_type = 'guest' then 'Guest' else p.display_name end as public_player_name,
          gp.player_id, gp.deck_id, gp.commander_id, c.canonical_name as commander_name,
          case when gp.deck_id is null then null else coalesce(d.display_name, c.canonical_name) end as deck_name,
-         (g.winning_seat = gp.seat) as is_winner
+         coalesce(g.winning_seat = gp.seat, false) as is_winner
   from public.game_participants as gp
   join public.games as g on g.id = gp.game_id
   join public.commanders as c on c.id = gp.commander_id

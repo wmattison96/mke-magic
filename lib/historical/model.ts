@@ -58,6 +58,7 @@ export interface ManualSeatInput {
   playerId: string | null;
   deckId: string | null;
   commanderId: string | null;
+  commanderName?: string | null;
 }
 
 export interface ManualDeckRef {
@@ -92,19 +93,18 @@ export function validateManualGame(input: ManualGameInput): string[] {
 
   for (const seat of input.seats) {
     if (!Number.isInteger(seat.seat) || seat.seat < 1 || seat.seat > input.podSize) errors.push(`Seat ${seat.seat} is outside the pod.`);
-    if (!seat.commanderId) errors.push(`Seat ${seat.seat} needs a commander.`);
+    const hasCommander = Boolean(seat.commanderId || seat.commanderName?.trim());
+    if (!hasCommander) errors.push(`Seat ${seat.seat} needs a commander.`);
     if (seat.isGuest) {
       if (seat.playerId !== null || seat.deckId !== null) errors.push(`Guest seat ${seat.seat} cannot have a member or deck ID.`);
     } else {
       if (!seat.playerId) errors.push(`Member seat ${seat.seat} needs a player ID.`);
-      if (!seat.deckId) {
-        errors.push(`Member seat ${seat.seat} needs an owned deck ID.`);
-      } else {
+      if (seat.deckId) {
         const deck = deckMap.get(seat.deckId);
         if (!deck) errors.push(`Member seat ${seat.seat} references an unknown deck.`);
         else {
           if (deck.playerId !== seat.playerId) errors.push(`Member seat ${seat.seat} must use a deck they own.`);
-          if (deck.commanderId !== seat.commanderId) errors.push(`Member seat ${seat.seat} commander does not match the selected deck.`);
+          if (seat.commanderId && deck.commanderId !== seat.commanderId) errors.push(`Member seat ${seat.seat} commander does not match the selected deck.`);
         }
       }
     }

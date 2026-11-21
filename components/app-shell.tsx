@@ -47,21 +47,23 @@ function Navigation({ activePath, mobile = false }: { activePath: string; mobile
 }
 
 export function AppShell({ children, activePath }: { children: ReactNode; activePath: string }) {
+  const usesLiveRecords = activePath === "/" || activePath === "/games" || activePath === "/tracking" || activePath === "/players" || activePath === "/decks";
+  const recordScope = activePath === "/" ? "Eligible 4-player statistics" : "All recorded pods";
   return <div className="min-h-screen bg-[#f4f6fa] text-slate-900 lg:flex">
     <aside className="hidden w-[250px] shrink-0 flex-col border-r border-slate-800 bg-[#111827] px-5 py-6 lg:sticky lg:top-0 lg:flex lg:h-screen">
       <Brand />
       <div className="mt-10"><Navigation activePath={activePath}/></div>
       <div className="mt-auto rounded-2xl border border-white/8 bg-white/[.035] p-4">
-        <div className="flex items-center gap-2"><span className="size-2 rounded-full bg-emerald-400"/><span className="text-[10px] font-semibold uppercase tracking-[.16em] text-slate-400">Demo workspace</span></div>
-        <p className="mt-3 text-sm font-medium text-slate-200">The Wednesday Pod</p>
-        <p className="mt-1 text-xs leading-5 text-slate-500">Sample data · not connected to a database</p>
+        <div className="flex items-center gap-2"><span className={`size-2 rounded-full ${usesLiveRecords ? "bg-emerald-400" : "bg-slate-500"}`}/><span className="text-[10px] font-semibold uppercase tracking-[.16em] text-slate-400">{usesLiveRecords ? "Live records" : "Demo workspace"}</span></div>
+        <p className="mt-3 text-sm font-medium text-slate-200">{usesLiveRecords ? "Shared playgroup" : "The Wednesday Pod"}</p>
+        <p className="mt-1 text-xs leading-5 text-slate-500">{activePath === "/" ? "Dashboard uses live Supabase records." : usesLiveRecords ? "This page uses current Supabase records." : "Sample data · not connected to a database"}</p>
       </div>
     </aside>
     <div className="min-w-0 flex-1">
-      <div className="border-b border-slate-200 bg-white lg:hidden"><div className="flex items-center justify-between px-4 py-3"><Brand/><div className="flex items-center gap-2"><span className="rounded-md bg-indigo-50 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-indigo-700">Demo</span><span className="grid size-9 place-items-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">JO</span></div></div><div className="overflow-x-auto border-t border-slate-100"><Navigation activePath={activePath} mobile/></div></div>
+      <div className="border-b border-slate-200 bg-white lg:hidden"><div className="flex items-center justify-between px-4 py-3"><Brand/><div className="flex items-center gap-2"><span className="rounded-md bg-indigo-50 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-indigo-700">{usesLiveRecords ? "Live" : "Demo"}</span><span className="grid size-9 place-items-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">MT</span></div></div><div className="overflow-x-auto border-t border-slate-100"><Navigation activePath={activePath} mobile/></div></div>
       <header className="hidden h-[68px] items-center justify-between border-b border-slate-200 bg-white px-8 lg:flex xl:px-10">
-        <div className="flex items-center gap-2 text-xs text-slate-400"><span>Workspace</span><span>/</span><span className="font-medium text-slate-700">The Wednesday Pod</span><span className="ml-1 rounded-md bg-slate-100 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">Demo</span></div>
-        <div className="flex items-center gap-4"><span className="text-xs text-slate-500">Commander · 4-player pods</span><span className="grid size-9 place-items-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">JO</span></div>
+        <div className="flex items-center gap-2 text-xs text-slate-400"><span>Workspace</span><span>/</span><span className="font-medium text-slate-700">{usesLiveRecords ? "Shared playgroup" : "The Wednesday Pod"}</span><span className="ml-1 rounded-md bg-slate-100 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">{usesLiveRecords ? "Live records" : "Demo"}</span></div>
+        <div className="flex items-center gap-4"><span className="text-xs text-slate-500">{usesLiveRecords ? recordScope : "Commander · 4-player pods"}</span><span className="grid size-9 place-items-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">MT</span></div>
       </header>
       <main className="mx-auto w-full max-w-[1500px] px-4 py-7 sm:px-7 sm:py-9 xl:px-10">{children}</main>
     </div>

@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseCsv } from "../lib/historical/csv.mts";
-import { getEligibility, validateHistoricalGame, validateManualGame } from "../lib/historical/model.mts";
+import { getEligibility, validateHistoricalGame, validateManualGame } from "../lib/historical/model.ts";
+import { containsGuestName, redactGuestNames } from "../lib/historical/privacy.mts";
 
 function fixtureGame(overrides = {}) {
   return {
@@ -64,6 +65,20 @@ test("manual game accepts a Guest winner without a member or deck ID", () => {
   assert.deepEqual(validateManualGame(input), []);
 });
 
+test("manual game accepts an unregistered member commander so a member deck can be created atomically", () => {
+  const input = {
+    podSize: 3,
+    winnerSeat: 2,
+    seats: [
+      { seat: 1, isGuest: false, playerId: "will", deckId: null, commanderId: null, commanderName: "Scryfall canonical card name" },
+      { seat: 2, isGuest: true, playerId: null, deckId: null, commanderId: "known-commander", commanderName: "Known Commander" },
+      { seat: 3, isGuest: true, playerId: null, deckId: null, commanderId: null, commanderName: "Another canonical card" },
+    ],
+    decks: [],
+  };
+  assert.deepEqual(validateManualGame(input), []);
+});
+
 test("manual game rejects duplicate members, incomplete seat order, and missing winner", () => {
   const seats = fixtureSeats().map(({ seat, playerId, deckId, commanderId }) => ({ seat, playerId, deckId, commanderId, isGuest: playerId === null }));
   const invalid = validateManualGame({
@@ -99,4 +114,10 @@ test("historical guest winner is counted by seat and passes eligibility", () => 
 test("historical validation rejects impossible calendar dates", () => {
   const errors = validateHistoricalGame(fixtureGame({ playedOn: "2026-02-30" }), fixtureSeats());
   assert.ok(errors.some((message) => message.includes("Invalid date")));
+});
+
+test("public note redaction removes private guest names without matching substrings", () => {
+  const safe = redactGuestNames("Ken won; Kenan played a different deck.", ["Ken"]);
+  assert.equal(safe, "Guest won; Kenan played a different deck.");
+  assert.equal(containsGuestName(safe, ["Ken"]), false);
 });
