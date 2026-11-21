@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Badge, Panel } from "@/components/ui";
 import { MiniStat, formatRate } from "@/components/profiles/primitives";
-import type { DeckPerformance, OpponentDeckStat, PlayerOpponentStat } from "@/lib/stats/profiles";
+import type { DeckPerformance, OpponentDeckMatchupStat, PlayerOpponentStat } from "@/lib/stats/profiles";
 
 export function PlayerDeckTable({ decks, podFilter }: { decks: DeckPerformance[]; podFilter: "3" | "4" | "5plus" }) {
   const [sort, setSort] = useState<"games" | "rate">("games");
@@ -41,15 +41,31 @@ export function PlayerOpponentsPanel({ opponents, podFilter }: { opponents: Play
   </Panel>;
 }
 
-export function OpponentDeckPanel({ title, rows, podFilter, mode = "both" }: { title: string; rows: OpponentDeckStat[]; podFilter: "3" | "4" | "5plus"; mode?: "both" | "faced" | "beaten" | "lost-to" }) {
-  const subtitle = mode === "beaten" ? "Member-owned decks defeated in eligible shared pods"
-    : mode === "lost-to" ? "Member-owned decks whose pilot won against this deck"
-      : "Member-owned decks appearing in the same eligible pods";
-  return <Panel title={title} subtitle={subtitle} className="min-w-0">
-    {!rows.length ? <p className="px-5 py-6 text-xs text-slate-400 sm:px-6">None in this sample.</p> : <ul className="divide-y divide-slate-100">{rows.map((row) => {
-      const outcome = mode === "beaten" ? `${row.winsAgainst} wins` : mode === "lost-to" ? `${row.lossesTo} losses` : `${row.winsAgainst} wins · ${row.lossesTo} losses`;
-      return <li key={row.deckId}><Link href={`/decks/${row.deckId}?pods=${podFilter}`} className="flex items-center justify-between gap-3 px-5 py-3 transition-colors hover:bg-slate-50 sm:px-6"><span className="min-w-0"><span className="block truncate text-xs font-medium text-slate-700">{row.name}</span><span className="mt-1 block truncate text-[9px] text-slate-400">{row.ownerName} · {row.games} shared pods</span></span><span className="shrink-0 text-right text-[10px] tabular-nums text-slate-500">{outcome}<span className="block text-[8px] text-slate-400">{mode === "lost-to" ? `${row.lossesTo}/${row.games} losses` : `${formatRate(row.winRate)} win share`}{row.games < 10 ? " · small sample" : ""}</span></span></Link></li>;
-    })}</ul>}
+export function OpponentDeckMatchupPanel({ title, rows, podFilter, mode, subjectLabel, minimumSharedGames }: {
+  title: string;
+  rows: OpponentDeckMatchupStat[];
+  podFilter: "3" | "4" | "5plus";
+  mode: "most-faced" | "matchup";
+  subjectLabel: "player" | "deck";
+  minimumSharedGames: number;
+}) {
+  const minimumNote = mode === "matchup"
+    ? subjectLabel === "deck" ? `Minimum ${minimumSharedGames} shared games` : `Minimum ${minimumSharedGames} shared eligible games`
+    : null;
+  const emptyMessage = mode === "matchup"
+    ? subjectLabel === "deck"
+      ? `No opposing deck has reached the minimum ${minimumSharedGames} shared games in this pod-size sample.`
+      : `No opposing deck has reached ${minimumSharedGames} eligible shared games in this pod-size sample.`
+    : "No member-owned opposing decks appeared in eligible shared pods for this sample.";
+  const subject = subjectLabel === "player" ? "Player" : "Deck";
+  const podDescription = subjectLabel === "player" ? "eligible shared pods" : "eligible shared multiplayer pods";
+  const matchupSubtitle = subjectLabel === "deck"
+    ? `Deck wins divided by ${podDescription} · Minimum ${minimumSharedGames} shared games`
+    : `${subject} wins divided by ${podDescription} containing this deck`;
+  return <Panel title={title} subtitle={mode === "matchup" ? matchupSubtitle : `Member-owned decks encountered in ${podDescription}`} className="min-w-0">
+    {minimumNote && <p className="border-b border-slate-100 px-5 py-2.5 text-[10px] text-slate-400 sm:px-6">{minimumNote}</p>}
+    {!rows.length ? <p className="px-5 py-6 text-xs leading-5 text-slate-400 sm:px-6">{emptyMessage}</p> : <ul className="divide-y divide-slate-100">{rows.map((row) => <li key={row.deckId}><Link href={`/decks/${row.deckId}?pods=${podFilter}`} className="flex items-center justify-between gap-3 px-5 py-3.5 transition-colors hover:bg-slate-50 sm:px-6"><span className="min-w-0"><span className="block truncate text-xs font-medium text-slate-700">{row.name}</span><span className="mt-1 block truncate text-[10px] text-slate-400">{row.ownerName} · {row.commanderName}</span></span><span className="shrink-0 text-right text-[10px] leading-4 tabular-nums text-slate-500">{row.sharedGames} shared {row.sharedGames === 1 ? "game" : "games"} · {row.wins} {subjectLabel} wins<br/><span className="font-semibold text-slate-700">{formatRate(row.winRate)}</span> win rate</span></Link></li>)}</ul>}
+    {subjectLabel === "deck" && <p className="border-t border-slate-100 px-5 py-2.5 text-[9px] leading-4 text-slate-400 sm:px-6">Multiplayer shared-pod statistics, not one-on-one matches. Guest victories stay in the matchup denominator and are not credited to a member deck.</p>}
   </Panel>;
 }
 

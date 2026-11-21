@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Panel } from "@/components/ui";
-import type { ColorBreakdown, ColorIdentity, DeckQuadrantPoint, ProfileTrendPoint, SeatPerformance } from "@/lib/stats/profiles";
+import { classifyDeckQuadrant, getDeckQuadrantAxisMax, type ColorBreakdown, type ColorIdentity, type DeckQuadrantPoint, type DeckQuadrantThreshold, type ProfileTrendPoint, type SeatPerformance } from "@/lib/stats/profiles";
 
 const colorNames: Record<ColorIdentity, string> = { W: "White", U: "Blue", B: "Black", R: "Red", G: "Green", C: "Colorless" };
 const colorStyles: Record<ColorIdentity, { bar: string; chip: string }> = {
@@ -99,28 +99,63 @@ export function DeckTrendPanel({ points }: { points: ProfileTrendPoint[] }) {
   </Panel>;
 }
 
-export function DeckQuadrantPanel({ points, selectedDeckId, medianGames, expectedWinRate }: { points: DeckQuadrantPoint[]; selectedDeckId: string; medianGames: number; expectedWinRate: number | null }) {
+export function DeckQuadrantPanel({ points, selectedDeckId, threshold, expectedWinRate }: { points: DeckQuadrantPoint[]; selectedDeckId: string; threshold: DeckQuadrantThreshold; expectedWinRate: number | null }) {
   if (!points.length) return <Panel title="Relative deck performance" subtitle="Member-owned decks in this pod-size dataset"><div className="px-5 py-7 text-xs text-slate-400 sm:px-6">No eligible deck appearances are available for this dataset.</div></Panel>;
   const width = 720;
-  const height = 300;
-  const left = 42;
+  const height = 340;
+  const left = 48;
   const right = 16;
-  const top = 14;
-  const bottom = 28;
-  const maxGames = Math.max(1, ...points.map((point) => point.games));
-  const x = (games: number) => left + games / maxGames * (width - left - right);
+  const top = 18;
+  const bottom = 46;
+  const axisMax = getDeckQuadrantAxisMax(points, threshold.games);
+  const rawTickStep = axisMax / 5;
+  const stepMagnitude = 10 ** Math.floor(Math.log10(rawTickStep));
+  const normalizedTickStep = rawTickStep / stepMagnitude;
+  const tickStep = (normalizedTickStep <= 1 ? 1 : normalizedTickStep <= 2 ? 2 : normalizedTickStep <= 5 ? 5 : 10) * stepMagnitude;
+  const xTicks = Array.from({ length: Math.round(axisMax / tickStep) + 1 }, (_, index) => index * tickStep);
+  const x = (games: number) => left + games / axisMax * (width - left - right);
   const y = (rate: number) => height - bottom - rate * (height - top - bottom);
-  const medianX = x(medianGames);
+  const thresholdX = x(threshold.games);
   const baselineY = y(expectedWinRate ?? .25);
+  const expectedText = rateText(expectedWinRate);
+  const thresholdDescription = threshold.basis === "fixed-four-player"
+    ? `4-player threshold: ${threshold.games} eligible games`
+    : `Selected-pod median: ${threshold.medianGames} games · frequent use starts at ${threshold.games}`;
+  const categoryNames = {
+    promising: "Promising",
+    "proven-performer": "Proven performer",
+    "underperforming-unproven": "Underperforming / unproven",
+    "frequent-underperformer": "Frequent underperformer",
+  } as const;
+  const quadrantGuide = [
+    { title: "Promising", detail: `Under ${threshold.games} games · above ${expectedText}`, position: "Top left" },
+    { title: "Proven performers", detail: `${threshold.games}+ games · above ${expectedText}`, position: "Top right" },
+    { title: "Underperforming / unproven", detail: `Under ${threshold.games} games · at or below ${expectedText}`, position: "Bottom left" },
+    { title: "Frequent underperformers", detail: `${threshold.games}+ games · at or below ${expectedText}`, position: "Bottom right" },
+  ];
   return <Panel title="Relative deck performance" subtitle="Each point is a distinct owner + commander deck; low samples remain visible with N">
-    <div className="px-3 pb-3 pt-4 sm:px-5"><div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-[9px] text-slate-400"><span>Pod-expected win share: {rateText(expectedWinRate)}</span><span>Median sample: {medianGames} games</span></div><div className="overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} className="min-w-[520px] w-full" role="img" aria-label="Scatter plot of eligible member-owned deck games and win rates">
-      {[0, .25, .5, .75, 1].map((rate) => <g key={rate}><line x1={left} x2={width - right} y1={y(rate)} y2={y(rate)} stroke="#e8edf3"/><text x={left - 6} y={y(rate) + 3} textAnchor="end" fill="#94a3b8" fontSize="9">{Math.round(rate * 100)}%</text></g>)}
-      <line x1={medianX} x2={medianX} y1={top} y2={height - bottom} stroke="#94a3b8" strokeDasharray="4 4"/><line x1={left} x2={width - right} y1={baselineY} y2={baselineY} stroke="#0f9d91" strokeDasharray="4 4"/>
-      {points.map((point) => <Link key={point.deckId} href={`/decks/${point.deckId}`} aria-label={`${point.ownerName}, ${point.name}, ${point.wins} wins in ${point.games} games, ${rateText(point.winRate)}`}>
-        <circle cx={x(point.games)} cy={y(point.winRate)} r={point.deckId === selectedDeckId ? 7 : 4.5} fill={point.deckId === selectedDeckId ? "#e28b35" : "#5965ce"} fillOpacity={point.games < 5 ? .55 : .88} stroke="white" strokeWidth="2"><title>{`${point.ownerName} · ${point.name} · ${point.wins}/${point.games} · ${rateText(point.winRate)}${point.games < 5 ? " · small sample" : ""}`}</title></circle>
-      </Link>)}
-      <text x={width / 2} y={height - 5} textAnchor="middle" fill="#64748b" fontSize="10">Single-winner eligible games</text><text x={left} y={top + 8} fill="#64748b" fontSize="9">Win rate</text>
-    </svg></div><p className="mt-2 text-[9px] leading-4 text-slate-400">The horizontal guide is the selected pod group&apos;s average expected share. Low-sample dots are faded; select a point to open its profile.</p></div>
+    <div className="px-3 pb-3 pt-4 sm:px-5">
+      <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-500"><span>Expected win share: {expectedText}</span><span>{thresholdDescription}</span><span>Linear X-axis: 0–{axisMax} games</span></div>
+      <div aria-label="Quadrant guide, arranged by chart position" className="mb-3 grid grid-cols-2 gap-2">
+        {quadrantGuide.map((quadrant) => <div key={quadrant.title} className="min-w-0 rounded-lg bg-slate-50 px-2.5 py-2">
+          <p className="text-[10px] font-medium text-slate-600">{quadrant.title}<span className="ml-1 font-normal text-slate-400">· {quadrant.position}</span></p>
+          <p className="mt-0.5 text-[9px] leading-4 text-slate-400">{quadrant.detail}</p>
+        </div>)}
+      </div>
+      <div className="overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} className="min-w-[520px] w-full" role="img" aria-label={`Linear scatter plot from zero to ${axisMax} eligible games and zero to one hundred percent win rate`}>
+        {[0, .25, .5, .75, 1].map((rate) => <g key={rate}><line x1={left} x2={width - right} y1={y(rate)} y2={y(rate)} stroke="#e8edf3"/><text x={left - 6} y={y(rate) + 3} textAnchor="end" fill="#94a3b8" fontSize="9">{Math.round(rate * 100)}%</text></g>)}
+        {xTicks.map((tick) => <g key={tick}><line x1={x(tick)} x2={x(tick)} y1={top} y2={height - bottom} stroke="#f1f4f8"/><text x={x(tick)} y={height - bottom + 14} textAnchor={tick === 0 ? "start" : tick === axisMax ? "end" : "middle"} fill="#94a3b8" fontSize="9">{tick}</text></g>)}
+        <line x1={thresholdX} x2={thresholdX} y1={top} y2={height - bottom} stroke="#64748b" strokeDasharray="4 4"><title>{`Frequent-use threshold: ${threshold.games} eligible games`}</title></line>
+        <line x1={left} x2={width - right} y1={baselineY} y2={baselineY} stroke="#0f9d91" strokeDasharray="4 4"><title>{`Selected-pod expected win share: ${expectedText}`}</title></line>
+        {points.map((point) => {
+          const category = expectedWinRate === null ? undefined : categoryNames[classifyDeckQuadrant(point, threshold.games, expectedWinRate)];
+          return <Link key={point.deckId} href={`/decks/${point.deckId}`} aria-label={`${point.ownerName}, ${point.name}, ${point.wins} wins in ${point.games} games, ${rateText(point.winRate)}${category ? `, ${category}` : ""}`}>
+            <circle cx={x(point.games)} cy={y(point.winRate)} r={point.deckId === selectedDeckId ? 7 : 4.5} fill={point.deckId === selectedDeckId ? "#e28b35" : "#5965ce"} fillOpacity={point.games < 5 ? .55 : .88} stroke="white" strokeWidth="2"><title>{`${point.ownerName} · ${point.name} · ${point.wins}/${point.games} · ${rateText(point.winRate)}${category ? ` · ${category}` : ""}${point.games < 5 ? " · small sample" : ""}`}</title></circle>
+          </Link>;
+        })}
+        <text x={width / 2} y={height - 5} textAnchor="middle" fill="#64748b" fontSize="10">Eligible single-winner games per deck</text><text x={left} y={top + 8} fill="#64748b" fontSize="9">Win rate</text>
+      </svg></div><p className="mt-2 text-[10px] leading-4 text-slate-400">The vertical guide marks the use threshold; the horizontal guide is the selected pod group&apos;s expected share. X positions are linear and use actual game counts. Dots under five games are faded; select a point to open its profile.</p>
+    </div>
   </Panel>;
 }
 

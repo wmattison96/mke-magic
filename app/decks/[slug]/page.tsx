@@ -2,13 +2,13 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { DeckQuadrantPanel, DeckTrendPanel, SeatPerformancePanel } from "@/components/profiles/charts";
-import { OpponentDeckPanel } from "@/components/profiles/player-detail-panels";
+import { OpponentDeckMatchupPanel } from "@/components/profiles/player-detail-panels";
 import { MoxfieldEditor } from "@/components/profiles/moxfield-editor";
 import { CommanderArt, PodFilter, ProfileGameList, ScopeNote, formatRate } from "@/components/profiles/primitives";
 import { StatCard } from "@/components/ui";
 import { getCommanderMetadata } from "@/lib/data/commander-metadata";
 import { getPublicProfileData } from "@/lib/data/public-profiles";
-import { buildProfileStatistics, parsePodFilter } from "@/lib/stats/profiles";
+import { buildProfileStatistics, parsePodFilter, DECK_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES } from "@/lib/stats/profiles";
 import { getCurrentMemberContext } from "@/lib/supabase/verified-user";
 
 export const instant = false;
@@ -59,10 +59,9 @@ export default async function DeckProfilePage({ params, searchParams }: {
       <StatCard label="Provisional deck Elo" value={stats.elo === null ? "N/A" : String(stats.elo)} note={`${stats.eloGames} eligible appearances${smallSample && stats.elo !== null ? " · exploratory sample" : ""}`} icon="⌁" accent="rose"/>
     </section>
 
-    <DeckQuadrantPanel points={stats.quadrantPoints} selectedDeckId={deck.id} medianGames={stats.quadrantMedianGames} expectedWinRate={stats.quadrantExpectedWinRate}/>
+    <DeckQuadrantPanel points={stats.quadrantPoints} selectedDeckId={deck.id} threshold={stats.quadrantThreshold} expectedWinRate={stats.quadrantExpectedWinRate}/>
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,.85fr)]"><DeckTrendPanel points={stats.trends}/><SeatPerformancePanel seats={stats.seats} title="Deck seat-order performance"/></div>
-    <div className="grid gap-5 xl:grid-cols-3"><OpponentDeckPanel title="Most commonly faced" rows={stats.mostFacedDecks} podFilter={podFilter} mode="faced"/><OpponentDeckPanel title="Most decks beaten" rows={stats.mostBeatenDecks} podFilter={podFilter} mode="beaten"/><OpponentDeckPanel title="Most losses to" rows={stats.mostLostToDecks} podFilter={podFilter} mode="lost-to"/></div>
-    <p className="-mt-4 px-1 text-[10px] leading-5 text-slate-400">Opponent-deck records are shared-pod context, not one-on-one matches. A member-owned opposing deck is credited with a loss only when its pilot won; a guest win remains a deck loss with no member-deck attribution.</p>
+    <div className="grid gap-5 xl:grid-cols-3"><OpponentDeckMatchupPanel title="Most Commonly Faced Decks" rows={stats.mostFacedDecks} podFilter={podFilter} mode="most-faced" subjectLabel="deck" minimumSharedGames={DECK_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES}/><OpponentDeckMatchupPanel title="Best Matchups" rows={stats.bestMatchups} podFilter={podFilter} mode="matchup" subjectLabel="deck" minimumSharedGames={DECK_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES}/><OpponentDeckMatchupPanel title="Toughest Matchups" rows={stats.toughestMatchups} podFilter={podFilter} mode="matchup" subjectLabel="deck" minimumSharedGames={DECK_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES}/></div>
     <section className="rounded-xl border border-slate-200/80 bg-white"><div className="border-b border-slate-100 px-5 py-4 sm:px-6"><h2 className="text-sm font-semibold text-slate-800">Recent matches</h2><p className="mt-1 text-xs text-slate-400">Most recent recorded appearances, including excluded and exceptional games</p></div><ProfileGameList games={stats.recentGames}/></section>
   </div></AppShell>;
 }

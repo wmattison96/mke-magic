@@ -2,13 +2,13 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { ColorBreakdownPanel, PlayerTrendPanels, SeatPerformancePanel } from "@/components/profiles/charts";
-import { CompetitiveRankBadge, OpponentDeckPanel, PlayerCareerPanel, PlayerDeckTable, PlayerOpponentsPanel } from "@/components/profiles/player-detail-panels";
+import { CompetitiveRankBadge, OpponentDeckMatchupPanel, PlayerCareerPanel, PlayerDeckTable, PlayerOpponentsPanel } from "@/components/profiles/player-detail-panels";
 import { MoxfieldEditor } from "@/components/profiles/moxfield-editor";
 import { PlayerPortrait, PodFilter, ProfileGameList, ScopeNote, formatRate } from "@/components/profiles/primitives";
 import { StatCard } from "@/components/ui";
 import { getCommanderMetadata } from "@/lib/data/commander-metadata";
 import { getPublicProfileData } from "@/lib/data/public-profiles";
-import { buildProfileStatistics, parsePodFilter } from "@/lib/stats/profiles";
+import { buildProfileStatistics, parsePodFilter, PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES } from "@/lib/stats/profiles";
 import { getCurrentMemberContext } from "@/lib/supabase/verified-user";
 
 export const instant = false;
@@ -65,9 +65,9 @@ export default async function PlayerProfilePage({ params, searchParams }: {
     <div className="grid gap-5 xl:grid-cols-2"><SeatPerformancePanel seats={stats.seats}/><PlayerCareerPanel wins={stats.streaks.longestWins} losses={stats.streaks.longestLosses} peakElo={stats.peakElo} minimumElo={stats.minimumElo} elo={stats.elo} eloGames={stats.eloGames} comparisonMinimum={stats.meetsComparisonMinimum}/></div>
     <div className="grid gap-5 xl:grid-cols-2"><ColorBreakdownPanel title="Color identity across distinct decks" breakdown={stats.colorsByDeck} basis="decks"/><ColorBreakdownPanel title="Color identity across eligible appearances" breakdown={stats.colorsByGame} basis="appearances"/></div>
     <PlayerDeckTable decks={stats.decks} podFilter={podFilter}/>
-    <div className="grid gap-5 xl:grid-cols-2"><PlayerOpponentsPanel opponents={stats.opponents} podFilter={podFilter}/><OpponentDeckPanel title="Most commonly faced decks" rows={stats.mostFacedDecks} podFilter={podFilter}/></div>
-    <div className="grid gap-5 xl:grid-cols-2"><OpponentDeckPanel title="Most wins against these decks" rows={stats.mostBeatenDecks} podFilter={podFilter}/><OpponentDeckPanel title="Most losses to these decks" rows={stats.mostLostToDecks} podFilter={podFilter}/></div>
+    <div className="grid gap-5 xl:grid-cols-2"><PlayerOpponentsPanel opponents={stats.opponents} podFilter={podFilter}/><OpponentDeckMatchupPanel title="Most Commonly Faced Decks" rows={stats.mostFacedDecks} podFilter={podFilter} mode="most-faced" subjectLabel="player" minimumSharedGames={PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES}/></div>
+    <div className="grid gap-5 xl:grid-cols-2"><OpponentDeckMatchupPanel title="Best Matchups" rows={stats.bestMatchups} podFilter={podFilter} mode="matchup" subjectLabel="player" minimumSharedGames={PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES}/><OpponentDeckMatchupPanel title="Toughest Matchups" rows={stats.toughestMatchups} podFilter={podFilter} mode="matchup" subjectLabel="player" minimumSharedGames={PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES}/></div>
     <section className="rounded-xl border border-slate-200/80 bg-white"><div className="border-b border-slate-100 px-5 py-4 sm:px-6"><h2 className="text-sm font-semibold text-slate-800">Recent game history</h2><p className="mt-1 text-xs text-slate-400">Most recent recorded appearances, including games outside official win statistics</p></div><ProfileGameList games={stats.recentGames}/></section>
-    <p className="text-center text-[10px] leading-5 text-slate-400">Shared opponent records describe games where both players appeared, including pods with other members or guests. They are not one-on-one match records.</p>
+    <p className="text-center text-[10px] leading-5 text-slate-400">Matchup rates are player wins divided by eligible shared pods containing that member-owned opposing deck. Guest wins remain in the denominator without counting as player wins. These are multiplayer shared pods, not one-on-one matches.</p>
   </div></AppShell>;
 }

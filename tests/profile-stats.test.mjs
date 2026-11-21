@@ -2,7 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { buildProfileStatistics, PLAYER_COMPARISON_MINIMUM_GAMES } from "../lib/stats/profiles.ts";
+import {
+  buildProfileStatistics,
+  classifyDeckQuadrant,
+  getDeckQuadrantAxisMax,
+  getDeckQuadrantThreshold,
+  PLAYER_COMPARISON_MINIMUM_GAMES,
+  DECK_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES,
+  PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES,
+  rankOpponentDeckMatchups,
+  sortPlayerDirectoryProfiles,
+} from "../lib/stats/profiles.ts";
 import { buildDashboardStats } from "../lib/stats/dashboard.ts";
 import { parseCsv } from "../lib/historical/csv.mts";
 
@@ -46,6 +56,239 @@ games.push(
   game("five-player-1", "2026-11-15", 5, [participant(1, "will", "will-arcades"), participant(2, "manfred", "manfred-arcades"), participant(3, null, null), participant(4, null, null), participant(5, null, null)], 5),
   game("six-player-2", "2026-11-16", 6, [participant(1, "will", "will-arcades"), participant(2, "manfred", "manfred-arcades"), participant(3, null, null), participant(4, null, null), participant(5, null, null), participant(6, null, null)], 2),
 );
+
+const matchupPlayers = [
+  { id: "will", name: "Will" },
+  { id: "manfred", name: "Manfred" },
+  { id: "sam", name: "Sam" },
+  { id: "keenan", name: "Keenan" },
+];
+const matchupDecks = [
+  { id: "will-main", ownerId: "will", ownerName: "Will", commanderId: "will-main", commanderName: "Will Main", name: "Will Main", moxfieldUrl: null },
+  { id: "will-alt", ownerId: "will", ownerName: "Will", commanderId: "will-alt", commanderName: "Will Alternate", name: "Will Alternate", moxfieldUrl: null },
+  { id: "opp-alpha", ownerId: "manfred", ownerName: "Manfred", commanderId: "opp-alpha", commanderName: "Alpha Commander", name: "Alpha Deck", moxfieldUrl: null },
+  { id: "opp-beta", ownerId: "sam", ownerName: "Sam", commanderId: "opp-beta", commanderName: "Beta Commander", name: "Beta Deck", moxfieldUrl: null },
+  { id: "opp-gamma", ownerId: "keenan", ownerName: "Keenan", commanderId: "opp-gamma", commanderName: "Gamma Commander", name: "Gamma Deck", moxfieldUrl: null },
+  { id: "opp-delta", ownerId: "manfred", ownerName: "Manfred", commanderId: "opp-delta", commanderName: "Delta Commander", name: "Delta Deck", moxfieldUrl: null },
+  { id: "opp-epsilon", ownerId: "sam", ownerName: "Sam", commanderId: "opp-epsilon", commanderName: "Epsilon Commander", name: "Epsilon Deck", moxfieldUrl: null },
+  { id: "opp-zeta", ownerId: "keenan", ownerName: "Keenan", commanderId: "opp-zeta", commanderName: "Zeta Commander", name: "Zeta Deck", moxfieldUrl: null },
+  { id: "opp-eta", ownerId: "manfred", ownerName: "Manfred", commanderId: "opp-eta", commanderName: "Eta Commander", name: "Eta Deck", moxfieldUrl: null },
+  { id: "opp-theta", ownerId: "sam", ownerName: "Sam", commanderId: "opp-theta", commanderName: "Theta Commander", name: "Theta Deck", moxfieldUrl: null },
+  { id: "opp-iota", ownerId: "keenan", ownerName: "Keenan", commanderId: "opp-iota", commanderName: "Iota Commander", name: "Iota Deck", moxfieldUrl: null },
+];
+
+function makeMatchupFixtures() {
+  const deckById = new Map(matchupDecks.map((deck) => [deck.id, deck]));
+  const playerById = new Map(matchupPlayers.map((player) => [player.id, player]));
+  const fixtures = [];
+  let gameNumber = 0;
+  const makeMember = (seat, playerId, deckId) => ({
+    seat,
+    playerId,
+    playerName: playerById.get(playerId).name,
+    deckId,
+    deckName: deckById.get(deckId).name,
+    commanderId: deckById.get(deckId).commanderId,
+    commanderName: deckById.get(deckId).commanderName,
+  });
+  const makeGuest = (seat) => ({ seat, playerId: null, playerName: "Guest", deckId: null, deckName: null, commanderId: null, commanderName: "Guest" });
+  const addGame = ({ opponentDeckId, winnerSeat, podSize = 4, result = "single_winner", duplicateOpponent = false, includeOwnAlternate = false }) => {
+    gameNumber += 1;
+    const opponent = deckById.get(opponentDeckId);
+    const roster = [makeMember(1, "will", "will-main"), makeMember(2, opponent.ownerId, opponentDeckId)];
+    if (duplicateOpponent) roster.push(makeMember(3, opponent.ownerId, opponentDeckId));
+    else if (includeOwnAlternate) roster.push(makeMember(3, "will", "will-alt"));
+    while (roster.length < podSize) roster.push(makeGuest(roster.length + 1));
+    fixtures.push({
+      id: `matchup-${gameNumber}`,
+      playedOn: new Date(Date.UTC(2026, 9, gameNumber)).toISOString().slice(0, 10),
+      gameNumberOnDate: 1,
+      podSize,
+      result,
+      winningSeat: result === "single_winner" ? winnerSeat : null,
+      participants: roster,
+    });
+  };
+  const schedules = [
+    { deckId: "opp-alpha", games: 5, wins: 2, guestWin: 4, duplicateAt: 0, ownAlternateAt: 1 },
+    { deckId: "opp-beta", games: 5, wins: 4 },
+    { deckId: "opp-gamma", games: 6, wins: 1 },
+    { deckId: "opp-delta", games: 5, wins: 0 },
+    { deckId: "opp-epsilon", games: 5, wins: 5 },
+    { deckId: "opp-zeta", games: 5, wins: 3 },
+    { deckId: "opp-eta", games: 4, wins: 4 },
+    { deckId: "opp-theta", games: 3, wins: 3 },
+    { deckId: "opp-iota", games: 2, wins: 2 },
+  ];
+  for (const schedule of schedules) {
+    for (let index = 0; index < schedule.games; index += 1) {
+      const winnerSeat = index === schedule.guestWin ? 4 : index < schedule.wins ? 1 : 2;
+      addGame({
+        opponentDeckId: schedule.deckId,
+        winnerSeat,
+        duplicateOpponent: index === schedule.duplicateAt,
+        includeOwnAlternate: index === schedule.ownAlternateAt,
+      });
+    }
+  }
+  addGame({ opponentDeckId: "opp-eta", winnerSeat: 4, podSize: 5 });
+  addGame({ opponentDeckId: "opp-beta", winnerSeat: null, result: "draw" });
+  return fixtures;
+}
+
+function makeDeckMatchupFixtures() {
+  return makeMatchupFixtures().map((fixture) => ({
+    ...fixture,
+    participants: fixture.participants.map((entry) => entry.deckId === "will-alt"
+      ? { seat: entry.seat, playerId: null, playerName: "Guest", deckId: null, deckName: null, commanderId: null, commanderName: "Guest" }
+      : entry),
+  }));
+}
+
+test("player directory sorting uses selected eligible games, then win rate and name", () => {
+  const profile = (id, name, gamesPlayed, winRate) => ({
+    player: { id, name },
+    totals: { winEligibleGames: gamesPlayed, winRate },
+  });
+  const sorted = sortPlayerDirectoryProfiles([
+    profile("will", "Will", 10, .4),
+    profile("manfred", "Manfred", 10, .2),
+    profile("andrea", "Andrea", 10, .4),
+    profile("sam", "Sam", 5, .9),
+    profile("keenan", "Keenan", 0, null),
+    profile("aaron", "Aaron", 0, null),
+  ]);
+  assert.deepEqual(sorted.map((row) => row.player.name), ["Andrea", "Will", "Manfred", "Sam", "Aaron", "Keenan"]);
+
+  const threePlayer = buildProfileStatistics(games, players, decks, "3");
+  const fivePlus = buildProfileStatistics(games, players, decks, "5plus");
+  assert.deepEqual(sortPlayerDirectoryProfiles(threePlayer.players.values()).map((row) => row.player.name).slice(0, 2), ["Will", "Manfred"]);
+  assert.equal(sortPlayerDirectoryProfiles(fivePlus.players.values())[0].totals.winEligibleGames, 2);
+});
+
+test("deck quadrant uses the four-player threshold and selected-pod median with linear numeric bounds", () => {
+  const fourPlayerPoints = [{ games: 1 }, { games: 3 }, { games: 38 }];
+  assert.deepEqual(getDeckQuadrantThreshold(fourPlayerPoints, "4"), {
+    games: 10,
+    basis: "fixed-four-player",
+    medianGames: null,
+  });
+  assert.equal(getDeckQuadrantAxisMax(fourPlayerPoints, 10), 40);
+
+  assert.deepEqual(getDeckQuadrantThreshold([{ games: 1 }, { games: 1 }, { games: 3 }, { games: 4 }], "3"), {
+    games: 2,
+    basis: "selected-sample-median",
+    medianGames: 2,
+  });
+  assert.equal(getDeckQuadrantThreshold([{ games: 1 }, { games: 1 }, { games: 1 }], "3").games, 2, "One-game-only samples need two appearances to count as frequent use.");
+  assert.deepEqual(getDeckQuadrantThreshold([{ games: 1 }, { games: 2 }, { games: 3 }, { games: 4 }], "5plus"), {
+    games: 3,
+    basis: "selected-sample-median",
+    medianGames: 2.5,
+  });
+
+  assert.equal(classifyDeckQuadrant({ games: 9, winRate: .26 }, 10, .25), "promising");
+  assert.equal(classifyDeckQuadrant({ games: 10, winRate: .26 }, 10, .25), "proven-performer");
+  assert.equal(classifyDeckQuadrant({ games: 9, winRate: .25 }, 10, .25), "underperforming-unproven");
+  assert.equal(classifyDeckQuadrant({ games: 10, winRate: .25 }, 10, .25), "frequent-underperformer");
+});
+
+test("player opponent-deck matchups count eligible shared pods once, including guest wins", () => {
+  const stats = buildProfileStatistics(makeMatchupFixtures(), matchupPlayers, matchupDecks, "4");
+  const will = stats.players.get("will");
+  const alpha = will.mostFacedDecks.find((row) => row.deckId === "opp-alpha");
+  assert.equal(alpha.sharedGames, 5, "The same opposing deck listed twice in a pod counts once.");
+  assert.equal(alpha.wins, 2, "A guest win remains in the denominator, not Will's win count.");
+  assert.equal(alpha.winRate, 2 / 5);
+  assert.equal(will.mostFacedDecks[0].deckId, "opp-gamma", "Most faced sorts by shared games, not win/loss totals.");
+  assert.deepEqual(will.mostFacedDecks.slice(0, 3).map((row) => row.deckId), ["opp-gamma", "opp-zeta", "opp-alpha"], "Equal encounter counts use stable owner/deck alphabetical order.");
+  assert.equal(will.mostFacedDecks.some((row) => row.deckId === "will-alt"), false, "The player's own decks are excluded.");
+  assert.equal(will.bestMatchups.some((row) => row.deckId === "opp-eta"), false, "Four shared games do not meet the Player five-game minimum.");
+  assert.equal(will.bestMatchups.some((row) => row.deckId === "opp-theta"), false, "Three shared games remain below the Player minimum.");
+  assert.equal(PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES, 5);
+  assert.equal(will.toughestMatchups.find((row) => row.deckId === "opp-alpha")?.sharedGames, 5, "Exactly five shared games qualify for Player matchup rankings.");
+  assert.deepEqual(will.bestMatchups.map((row) => row.deckId), ["opp-epsilon", "opp-beta", "opp-zeta"]);
+  assert.deepEqual(will.toughestMatchups.map((row) => row.deckId), ["opp-delta", "opp-gamma", "opp-alpha"]);
+  assert.equal(new Set([...will.bestMatchups, ...will.toughestMatchups].map((row) => row.deckId)).size, 6, "Best and toughest lists are disjoint when six qualifying decks exist.");
+
+  const fivePlus = buildProfileStatistics(makeMatchupFixtures(), matchupPlayers, matchupDecks, "5plus").players.get("will");
+  assert.deepEqual(fivePlus.mostFacedDecks.map((row) => row.deckId), ["opp-eta"]);
+  assert.equal(fivePlus.mostFacedDecks[0].sharedGames, 1);
+  assert.equal(fivePlus.bestMatchups.length, 0);
+  assert.equal(fivePlus.toughestMatchups.length, 0);
+  const empty = buildProfileStatistics([], matchupPlayers, matchupDecks, "4").players.get("will");
+  assert.deepEqual(empty.mostFacedDecks, []);
+  assert.deepEqual(empty.bestMatchups, []);
+  assert.deepEqual(empty.toughestMatchups, []);
+});
+
+test("opponent-deck ranking honors sample-size and stable alphabetical tie-breakers", () => {
+  const makeRow = (deckId, ownerName, name, sharedGames, wins) => ({
+    deckId, ownerId: ownerName, ownerName, name, commanderName: name, sharedGames, wins, winRate: wins / sharedGames,
+  });
+  const sampleTie = rankOpponentDeckMatchups([
+    makeRow("first", "A", "First", 5, 5),
+    makeRow("second", "A", "Second", 5, 4),
+    makeRow("larger-tie", "A", "Zeta", 10, 6),
+    makeRow("smaller-tie", "A", "Alpha", 5, 3),
+    makeRow("low-one", "B", "One", 5, 1),
+    makeRow("low-zero", "B", "Zero", 5, 0),
+  ], { minimumSharedGames: PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES });
+  assert.equal(sampleTie.best[2].deckId, "larger-tie", "Equal rates prefer the larger sample before alphabetical name.");
+  assert.deepEqual(sampleTie.toughest.map((row) => row.deckId), ["low-zero", "low-one", "smaller-tie"]);
+  const alphabeticalTie = rankOpponentDeckMatchups([
+    makeRow("top-one", "A", "Top One", 5, 5),
+    makeRow("top-two", "A", "Top Two", 5, 4),
+    makeRow("tie-zeta", "Same Owner", "Zeta", 5, 3),
+    makeRow("tie-alpha", "Same Owner", "Alpha", 5, 3),
+  ], { minimumSharedGames: PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES });
+  assert.equal(alphabeticalTie.best[2].deckId, "tie-alpha", "Equal rates and sample sizes use alphabetical deck name.");
+  assert.deepEqual(rankOpponentDeckMatchups([], { minimumSharedGames: PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES }), { mostFaced: [], best: [], toughest: [] });
+});
+
+test("deck-versus-deck matchups use selected deck wins and eligible shared-pod samples", () => {
+  const fixtureGames = makeDeckMatchupFixtures();
+  const stats = buildProfileStatistics(fixtureGames, matchupPlayers, matchupDecks, "4");
+  const willMain = stats.decks.get("will-main");
+  const alpha = willMain.mostFacedDecks.find((row) => row.deckId === "opp-alpha");
+
+  assert.equal(alpha.sharedGames, 5, "A repeated opposing deck counts once per game.");
+  assert.equal(alpha.wins, 2, "Only games won by the selected deck are credited as its wins.");
+  assert.equal(alpha.winRate, 2 / 5, "A guest winner remains in the shared-game denominator.");
+  assert.equal(willMain.mostFacedDecks.some((row) => row.deckId === "will-main"), false, "The selected deck never appears as its own opponent.");
+  assert.equal(DECK_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES, 3);
+  assert.equal(willMain.bestMatchups.find((row) => row.deckId === "opp-theta")?.sharedGames, 3, "Exactly three shared games meet the Deck Profile minimum.");
+  assert.equal(willMain.bestMatchups.some((row) => row.deckId === "opp-iota"), false, "Two shared games do not meet the Deck Profile minimum.");
+  assert.equal(willMain.toughestMatchups.some((row) => row.deckId === "opp-iota"), false);
+  assert.deepEqual(willMain.bestMatchups.map((row) => row.deckId), ["opp-epsilon", "opp-eta", "opp-theta"]);
+  assert.deepEqual(willMain.toughestMatchups.map((row) => row.deckId), ["opp-delta", "opp-gamma", "opp-alpha"]);
+  assert.deepEqual(willMain.mostFacedDecks.slice(0, 3).map((row) => row.deckId), ["opp-gamma", "opp-zeta", "opp-alpha"], "Equal shared-game counts use stable owner and deck name tie-breakers.");
+
+  const threeGameSample = fixtureGames.filter((game) => game.participants.some((entry) => entry.deckId === "opp-theta"));
+  const threeGameDeck = buildProfileStatistics(threeGameSample, matchupPlayers, matchupDecks, "4").decks.get("will-main");
+  assert.deepEqual(threeGameDeck.bestMatchups.map((row) => row.deckId), ["opp-theta"]);
+  assert.deepEqual(threeGameDeck.toughestMatchups.map((row) => row.deckId), ["opp-theta"]);
+
+  const twoGameSample = fixtureGames.filter((game) => game.participants.some((entry) => entry.deckId === "opp-iota"));
+  const twoGameDeck = buildProfileStatistics(twoGameSample, matchupPlayers, matchupDecks, "4").decks.get("will-main");
+  assert.deepEqual(twoGameDeck.bestMatchups, []);
+  assert.deepEqual(twoGameDeck.toughestMatchups, []);
+
+  const willPlayer = stats.players.get("will");
+  assert.deepEqual(willPlayer.bestMatchups.map((row) => row.deckId), ["opp-epsilon", "opp-beta", "opp-zeta"], "Player matchups keep the existing five-game threshold.");
+  assert.deepEqual(willPlayer.toughestMatchups.map((row) => row.deckId), ["opp-delta", "opp-gamma", "opp-alpha"]);
+
+  const fivePlus = buildProfileStatistics(fixtureGames, matchupPlayers, matchupDecks, "5plus").decks.get("will-main");
+  assert.deepEqual(fivePlus.mostFacedDecks.map((row) => row.deckId), ["opp-eta"]);
+  assert.equal(fivePlus.mostFacedDecks[0].sharedGames, 1, "The pod-size selector filters encounter frequency consistently.");
+  assert.deepEqual(fivePlus.bestMatchups, [], "A selected pod-size sample below three shared games has no ranked matchup.");
+  assert.deepEqual(fivePlus.toughestMatchups, []);
+
+  const empty = buildProfileStatistics([], matchupPlayers, matchupDecks, "4").decks.get("will-main");
+  assert.deepEqual(empty.mostFacedDecks, []);
+  assert.deepEqual(empty.bestMatchups, []);
+  assert.deepEqual(empty.toughestMatchups, []);
+});
 
 test("player profiles separate recorded appearances, 2+ member appearances, and win denominators", () => {
   const stats = buildProfileStatistics(games, players, decks, "4", new Map([
@@ -107,9 +350,12 @@ test("pod-size filters remain separate and 5+ expected share uses each actual po
   const fivePlus = buildProfileStatistics(games, players, decks, "5plus");
   assert.equal(three.totalGamesInPod, 1);
   assert.equal(three.players.get("will").expectedWinRate, 1 / 3);
+  assert.equal(three.decks.get("will-arcades").quadrantExpectedWinRate, 1 / 3);
   assert.equal(four.winEligibleGames, 11);
+  assert.equal(four.decks.get("will-arcades").quadrantExpectedWinRate, .25);
   assert.equal(fivePlus.totalGamesInPod, 2);
   assert.equal(fivePlus.players.get("will").expectedWinRate, (1 / 5 + 1 / 6) / 2);
+  assert.equal(fivePlus.decks.get("will-arcades").quadrantExpectedWinRate, (1 / 5 + 1 / 6) / 2);
   assert.equal(fivePlus.players.get("will").eloGames, 2);
   assert.equal(PLAYER_COMPARISON_MINIMUM_GAMES, 10);
 });
@@ -195,6 +441,9 @@ test("all six player and 61 owner+commander deck profiles reconcile to the histo
     assert.equal(profile.elo, dashboard.playerLeaderboard.find((row) => row.id === id)?.elo ?? null, `${id} profile Elo reuses the Dashboard engine`);
     assert.equal(profile.meetsComparisonMinimum, eligibleGames >= 10);
   }
+  assert.deepEqual(sortPlayerDirectoryProfiles(stats.players.values()).map((profile) => [profile.player.name, profile.totals.winEligibleGames]), [
+    ["Nelson", 97], ["Will", 85], ["Manfred", 85], ["Josh", 83], ["Sam", 3], ["Keenan", 0],
+  ]);
   assert.deepEqual([...stats.players.values()].filter((profile) => profile.competitiveRank !== null).map((profile) => profile.player.name).sort(), ["Josh", "Manfred", "Nelson", "Will"]);
   assert.ok(stats.deckDirectory.every((deck) => deck.rank === null || deck.winEligibleGames >= 5));
   assert.equal(stats.decks.size, 61, "Registered, unused member decks remain profile-accessible.");

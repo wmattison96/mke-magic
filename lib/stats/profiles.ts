@@ -14,6 +14,11 @@ export type ColorIdentity = "W" | "U" | "B" | "R" | "G" | "C";
 export const PLAYER_COMPARISON_MINIMUM_GAMES = 10;
 export const PLAYER_DECK_RATE_MINIMUM_GAMES = 4;
 export const DECK_RANKING_MINIMUM_GAMES = 5;
+export const PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES = 5;
+export const DECK_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES = 3;
+export const OPPONENT_DECK_MATCHUP_LIST_SIZE = 3;
+export const OPPONENT_DECK_MOST_FACED_LIST_SIZE = 3;
+export const FOUR_PLAYER_DECK_QUADRANT_THRESHOLD_GAMES = 10;
 
 export interface ProfileDeck {
   id: string;
@@ -87,17 +92,15 @@ export interface PlayerOpponentStat {
   winRate: number;
 }
 
-export interface OpponentDeckStat {
+export interface OpponentDeckMatchupStat {
   deckId: string;
   ownerId: string;
   ownerName: string;
   name: string;
   commanderName: string;
-  games: number;
-  winsAgainst: number;
-  lossesTo: number;
+  sharedGames: number;
+  wins: number;
   winRate: number;
-  elo: number | null;
 }
 
 export interface RecentProfileGame {
@@ -128,9 +131,9 @@ export interface PlayerProfileStats {
   colorsByGame: ColorBreakdown;
   trends: ProfileTrendPoint[];
   opponents: PlayerOpponentStat[];
-  mostFacedDecks: OpponentDeckStat[];
-  mostBeatenDecks: OpponentDeckStat[];
-  mostLostToDecks: OpponentDeckStat[];
+  mostFacedDecks: OpponentDeckMatchupStat[];
+  bestMatchups: OpponentDeckMatchupStat[];
+  toughestMatchups: OpponentDeckMatchupStat[];
   streaks: StreakStats;
   peakElo: number | null;
   minimumElo: number | null;
@@ -148,6 +151,18 @@ export interface DeckQuadrantPoint {
   elo: number | null;
 }
 
+export interface DeckQuadrantThreshold {
+  games: number;
+  basis: "fixed-four-player" | "selected-sample-median";
+  medianGames: number | null;
+}
+
+export type DeckQuadrantClassification =
+  | "promising"
+  | "proven-performer"
+  | "underperforming-unproven"
+  | "frequent-underperformer";
+
 export interface DeckProfileStats {
   deck: ProfileDeck;
   owner: StatsPlayer | null;
@@ -163,11 +178,11 @@ export interface DeckProfileStats {
   streaks: StreakStats;
   peakElo: number | null;
   minimumElo: number | null;
-  mostFacedDecks: OpponentDeckStat[];
-  mostBeatenDecks: OpponentDeckStat[];
-  mostLostToDecks: OpponentDeckStat[];
+  mostFacedDecks: OpponentDeckMatchupStat[];
+  bestMatchups: OpponentDeckMatchupStat[];
+  toughestMatchups: OpponentDeckMatchupStat[];
   quadrantPoints: DeckQuadrantPoint[];
-  quadrantMedianGames: number;
+  quadrantThreshold: DeckQuadrantThreshold;
   quadrantExpectedWinRate: number | null;
   recentGames: RecentProfileGame[];
 }
@@ -204,6 +219,83 @@ function finishCounts(counts: MutableCounts): EligibleTotals {
 export function parsePodFilter(value: string | string[] | undefined): PodFilter {
   const candidate = Array.isArray(value) ? value[0] : value;
   return candidate === "3" || candidate === "5plus" ? candidate : "4";
+}
+
+export function sortPlayerDirectoryProfiles(profiles: Iterable<PlayerProfileStats>): PlayerProfileStats[] {
+  return [...profiles].sort((a, b) =>
+    b.totals.winEligibleGames - a.totals.winEligibleGames
+      || (b.totals.winRate ?? -1) - (a.totals.winRate ?? -1)
+      || a.player.name.localeCompare(b.player.name)
+      || a.player.id.localeCompare(b.player.id));
+}
+
+export function getDeckQuadrantThreshold(
+  points: Array<Pick<DeckQuadrantPoint, "games">>,
+  podFilter: PodFilter,
+): DeckQuadrantThreshold {
+  if (!points.length) return { games: 0, basis: podFilter === "4" ? "fixed-four-player" : "selected-sample-median", medianGames: null };
+  if (podFilter === "4") {
+    return { games: FOUR_PLAYER_DECK_QUADRANT_THRESHOLD_GAMES, basis: "fixed-four-player", medianGames: null };
+  }
+  const sorted = points.map((point) => point.games).sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const medianGames = sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  return { games: Math.max(2, Math.ceil(medianGames)), basis: "selected-sample-median", medianGames };
+}
+
+export function getDeckQuadrantAxisMax(
+  points: Array<Pick<DeckQuadrantPoint, "games">>,
+  thresholdGames: number,
+): number {
+  const maximum = Math.max(1, thresholdGames, ...points.map((point) => point.games));
+  const rawStep = maximum / 5;
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const normalized = rawStep / magnitude;
+  const step = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude;
+  return Math.ceil(maximum / step) * step;
+}
+
+export function classifyDeckQuadrant(
+  point: Pick<DeckQuadrantPoint, "games" | "winRate">,
+  thresholdGames: number,
+  expectedWinRate: number,
+): DeckQuadrantClassification {
+  const highUsage = point.games >= thresholdGames;
+  const aboveExpected = point.winRate > expectedWinRate;
+  if (aboveExpected) return highUsage ? "proven-performer" : "promising";
+  return highUsage ? "frequent-underperformer" : "underperforming-unproven";
+}
+
+export function rankOpponentDeckMatchups(
+  rows: OpponentDeckMatchupStat[],
+  { minimumSharedGames, mostFacedLimit = OPPONENT_DECK_MOST_FACED_LIST_SIZE }: {
+    minimumSharedGames: number;
+    mostFacedLimit?: number;
+  },
+): {
+  mostFaced: OpponentDeckMatchupStat[];
+  best: OpponentDeckMatchupStat[];
+  toughest: OpponentDeckMatchupStat[];
+} {
+  const compareDeckName = (a: OpponentDeckMatchupStat, b: OpponentDeckMatchupStat) =>
+    a.ownerName.localeCompare(b.ownerName) || a.name.localeCompare(b.name) || a.deckId.localeCompare(b.deckId);
+  const mostFaced = [...rows].sort((a, b) =>
+    b.sharedGames - a.sharedGames || compareDeckName(a, b));
+  const eligible = rows.filter((row) => row.sharedGames >= minimumSharedGames);
+  const best = [...eligible].sort((a, b) =>
+    b.winRate - a.winRate || b.sharedGames - a.sharedGames || compareDeckName(a, b))
+    .slice(0, OPPONENT_DECK_MATCHUP_LIST_SIZE);
+  const bestIds = new Set(best.map((row) => row.deckId));
+  const toughestCandidates = [...eligible].sort((a, b) =>
+    a.winRate - b.winRate || b.sharedGames - a.sharedGames || compareDeckName(a, b));
+  const toughest = (eligible.length >= OPPONENT_DECK_MATCHUP_LIST_SIZE * 2
+    ? toughestCandidates.filter((row) => !bestIds.has(row.deckId))
+    : toughestCandidates).slice(0, OPPONENT_DECK_MATCHUP_LIST_SIZE);
+  return {
+    mostFaced: mostFaced.slice(0, mostFacedLimit),
+    best,
+    toughest,
+  };
 }
 
 function matchesPod(game: StatsGame, podFilter: PodFilter): boolean {
@@ -325,29 +417,6 @@ function getRankings<T extends { id: string; winEligibleGames: number; winRate: 
     .filter((row) => row.winEligibleGames >= PLAYER_COMPARISON_MINIMUM_GAMES && row.winRate !== null)
     .sort((a, b) => (b.winRate ?? -1) - (a.winRate ?? -1) || b.winEligibleGames - a.winEligibleGames || a.id.localeCompare(b.id))
     .map((row, index) => [row.id, index + 1]));
-}
-
-function makeOpponentDeckStats(
-  gameCounts: Map<string, { games: number; winsAgainst: number; lossesTo: number }>,
-  deckCatalog: ReadonlyMap<string, ProfileDeck>,
-  deckElo: ReadonlyMap<string, number>,
-): OpponentDeckStat[] {
-  return [...gameCounts.entries()].flatMap(([deckId, counts]) => {
-    const deck = deckCatalog.get(deckId);
-    if (!deck) return [];
-    return [{
-      deckId,
-      ownerId: deck.ownerId,
-      ownerName: deck.ownerName,
-      name: deck.name,
-      commanderName: deck.commanderName,
-      games: counts.games,
-      winsAgainst: counts.winsAgainst,
-      lossesTo: counts.lossesTo,
-      winRate: counts.games ? counts.winsAgainst / counts.games : 0,
-      elo: deckElo.get(deckId) === undefined ? null : Math.round(deckElo.get(deckId)!),
-    }];
-  }).sort((a, b) => b.games - a.games || a.name.localeCompare(b.name));
 }
 
 export function buildProfileStatistics(
@@ -472,12 +541,13 @@ export function buildProfileStatistics(
     const deckColorWeights = new Map(playedDecks.map((deck) => [deck.id, 1]));
     const gameColorWeights = new Map(deckCountsForPlayer);
     const opponentCounts = new Map<string, { sharedGames: number; wins: number }>();
-    const opponentDeckCounts = new Map<string, { games: number; winsAgainst: number; lossesTo: number }>();
+    const opponentDeckCounts = new Map<string, { sharedGames: number; wins: number }>();
     for (const game of eligibleGames) {
       const self = game.participants.find((participant) => participant.playerId === player.id);
       if (!self) continue;
       const playerWon = self.seat === game.winningSeat;
       const seenOpponentPlayers = new Set<string>();
+      const seenOpponentDecks = new Set<string>();
       for (const opponent of game.participants) {
         if (opponent.playerId && opponent.playerId !== player.id && !seenOpponentPlayers.has(opponent.playerId)) {
           seenOpponentPlayers.add(opponent.playerId);
@@ -486,11 +556,13 @@ export function buildProfileStatistics(
           if (playerWon) counts.wins += 1;
           opponentCounts.set(opponent.playerId, counts);
         }
-        if (!opponent.deckId || opponent.deckId === self.deckId) continue;
-        const counts = opponentDeckCounts.get(opponent.deckId) ?? { games: 0, winsAgainst: 0, lossesTo: 0 };
-        counts.games += 1;
-        if (playerWon) counts.winsAgainst += 1;
-        if (opponent.seat === game.winningSeat) counts.lossesTo += 1;
+        if (!opponent.deckId || seenOpponentDecks.has(opponent.deckId)) continue;
+        const opponentDeck = deckCatalog.get(opponent.deckId);
+        if (!opponentDeck || opponentDeck.ownerId === player.id) continue;
+        seenOpponentDecks.add(opponent.deckId);
+        const counts = opponentDeckCounts.get(opponent.deckId) ?? { sharedGames: 0, wins: 0 };
+        counts.sharedGames += 1;
+        if (playerWon) counts.wins += 1;
         opponentDeckCounts.set(opponent.deckId, counts);
       }
     }
@@ -499,7 +571,23 @@ export function buildProfileStatistics(
       if (!opponent) return [];
       return [{ playerId: opponentId, name: opponent.name, ...counts, winRate: counts.sharedGames ? counts.wins / counts.sharedGames : 0 }];
     }).sort((a, b) => b.sharedGames - a.sharedGames || a.name.localeCompare(b.name));
-    const opponentDeckRows = makeOpponentDeckStats(opponentDeckCounts, deckCatalog, deckEloHistory.ratings);
+    const opponentDeckRows: OpponentDeckMatchupStat[] = [...opponentDeckCounts.entries()].flatMap(([deckId, counts]) => {
+      const deck = deckCatalog.get(deckId);
+      if (!deck) return [];
+      return [{
+        deckId,
+        ownerId: deck.ownerId,
+        ownerName: deck.ownerName,
+        name: deck.name,
+        commanderName: deck.commanderName,
+        sharedGames: counts.sharedGames,
+        wins: counts.wins,
+        winRate: counts.wins / counts.sharedGames,
+      }];
+    });
+    const matchupRankings = rankOpponentDeckMatchups(opponentDeckRows, {
+      minimumSharedGames: PLAYER_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES,
+    });
     const seats = makeSeats(podGames, maximumSeat, (candidateId) => candidateId === player.id);
     const appearancesBySeat = seats.reduce((sum, seat) => sum + seat.participationEligibleAppearances, 0);
     const adjustedSeats = seats.map((seat) => ({ ...seat, appearanceShare: appearancesBySeat ? seat.participationEligibleAppearances / appearancesBySeat : 0 }));
@@ -528,9 +616,9 @@ export function buildProfileStatistics(
       colorsByGame: makeColorBreakdown(gameColorWeights, deckCatalog, metadataById),
       trends,
       opponents: opponentRows,
-      mostFacedDecks: opponentDeckRows.slice(0, 3),
-      mostBeatenDecks: [...opponentDeckRows].filter((deck) => deck.winsAgainst > 0).sort((a, b) => b.winsAgainst - a.winsAgainst || b.games - a.games).slice(0, 3),
-      mostLostToDecks: [...opponentDeckRows].filter((deck) => deck.lossesTo > 0).sort((a, b) => b.lossesTo - a.lossesTo || b.games - a.games).slice(0, 3),
+      mostFacedDecks: matchupRankings.mostFaced,
+      bestMatchups: matchupRankings.best,
+      toughestMatchups: matchupRankings.toughest,
       streaks: getStreaks(playerHistory),
       peakElo: careerElo.length ? Math.round(Math.max(...careerElo)) : null,
       minimumElo: careerElo.length ? Math.round(Math.min(...careerElo)) : null,
@@ -547,10 +635,6 @@ export function buildProfileStatistics(
   const deckAppearanceTotal = winGames.reduce((sum, game) => sum + game.participants.filter((participant) => participant.deckId !== null).length, 0);
   const quadrantExpectedWinRate = deckAppearanceTotal ? expectedTotals / deckAppearanceTotal : null;
   const rankedDecks = deckRows.filter((deck) => deck.winEligibleGames > 0 && deck.winRate !== null);
-  const sortedGames = rankedDecks.map((deck) => deck.winEligibleGames).sort((a, b) => a - b);
-  const quadrantMedianGames = sortedGames.length
-    ? sortedGames.length % 2 ? sortedGames[Math.floor(sortedGames.length / 2)] : (sortedGames[sortedGames.length / 2 - 1] + sortedGames[sortedGames.length / 2]) / 2
-    : 0;
   const quadrantPoints: DeckQuadrantPoint[] = rankedDecks.map((deck) => ({
     deckId: deck.id,
     ownerId: deck.ownerId,
@@ -561,8 +645,9 @@ export function buildProfileStatistics(
     winRate: deck.winRate!,
     elo: deck.elo,
   }));
+  const quadrantThreshold = getDeckQuadrantThreshold(quadrantPoints, podFilter);
   for (const deck of registeredDecks) {
-    const deckCounts = new Map<string, { games: number; winsAgainst: number; lossesTo: number }>();
+    const opponentDeckCounts = new Map<string, { sharedGames: number; wins: number }>();
     const recordedGames = podGames.filter((game) => game.participants.some((participant) => participant.deckId === deck.id));
     const eligibleGames = winGames.filter((game) => game.participants.some((participant) => participant.deckId === deck.id));
     const trend: ProfileTrendPoint[] = [];
@@ -580,20 +665,40 @@ export function buildProfileStatistics(
         wins: cumulativeWins,
         winRate: cumulativeWins / (index + 1),
       });
+      const seenOpponentDecks = new Set<string>();
       for (const opponent of game.participants) {
-        if (!opponent.deckId || opponent.deckId === deck.id) continue;
-        const counts = deckCounts.get(opponent.deckId) ?? { games: 0, winsAgainst: 0, lossesTo: 0 };
-        counts.games += 1;
-        if (self.seat === game.winningSeat) counts.winsAgainst += 1;
-        if (opponent.seat === game.winningSeat) counts.lossesTo += 1;
-        deckCounts.set(opponent.deckId, counts);
+        if (!opponent.deckId || opponent.deckId === deck.id || seenOpponentDecks.has(opponent.deckId)) continue;
+        const opponentDeck = deckCatalog.get(opponent.deckId);
+        if (!opponentDeck) continue;
+        seenOpponentDecks.add(opponent.deckId);
+        const counts = opponentDeckCounts.get(opponent.deckId) ?? { sharedGames: 0, wins: 0 };
+        counts.sharedGames += 1;
+        if (self.seat === game.winningSeat) counts.wins += 1;
+        opponentDeckCounts.set(opponent.deckId, counts);
       }
     }
     const counts = deckStats.get(deck.id)!;
     const owner = playersById.get(deck.ownerId) ?? null;
     const seats = makeSeats(podGames, maximumSeat, (_playerId, deckId) => deckId === deck.id);
     const totalSeatAppearances = seats.reduce((sum, seat) => sum + seat.participationEligibleAppearances, 0);
-    const opponentDeckRows = makeOpponentDeckStats(deckCounts, deckCatalog, deckEloHistory.ratings);
+    const opponentDeckRows: OpponentDeckMatchupStat[] = [...opponentDeckCounts.entries()].flatMap(([deckId, deckCounts]) => {
+      const opponentDeck = deckCatalog.get(deckId);
+      if (!opponentDeck) return [];
+      return [{
+        deckId,
+        ownerId: opponentDeck.ownerId,
+        ownerName: opponentDeck.ownerName,
+        name: opponentDeck.name,
+        commanderName: opponentDeck.commanderName,
+        sharedGames: deckCounts.sharedGames,
+        wins: deckCounts.wins,
+        winRate: deckCounts.wins / deckCounts.sharedGames,
+      }];
+    });
+    const matchupRankings = rankOpponentDeckMatchups(opponentDeckRows, {
+      minimumSharedGames: DECK_OPPONENT_DECK_MATCHUP_MINIMUM_GAMES,
+      mostFacedLimit: 5,
+    });
     const history = deckEloHistory.history.get(deck.id) ?? [];
     const ratings = history.map((point) => point.rating);
     const recentGames = recordedGames.slice(-8).reverse().map((game) => {
@@ -615,11 +720,11 @@ export function buildProfileStatistics(
       streaks: getStreaks(eligibleGames.map((game) => ({ game, seat: game.participants.find((participant) => participant.deckId === deck.id)!.seat }))),
       peakElo: ratings.length ? Math.round(Math.max(...ratings)) : null,
       minimumElo: ratings.length ? Math.round(Math.min(...ratings)) : null,
-      mostFacedDecks: opponentDeckRows.slice(0, 5),
-      mostBeatenDecks: [...opponentDeckRows].filter((row) => row.winsAgainst > 0).sort((a, b) => b.winsAgainst - a.winsAgainst || b.games - a.games).slice(0, 3),
-      mostLostToDecks: [...opponentDeckRows].filter((row) => row.lossesTo > 0).sort((a, b) => b.lossesTo - a.lossesTo || b.games - a.games).slice(0, 3),
+      mostFacedDecks: matchupRankings.mostFaced,
+      bestMatchups: matchupRankings.best,
+      toughestMatchups: matchupRankings.toughest,
       quadrantPoints,
-      quadrantMedianGames,
+      quadrantThreshold,
       quadrantExpectedWinRate,
       recentGames,
     });
