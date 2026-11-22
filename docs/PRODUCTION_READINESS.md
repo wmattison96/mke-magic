@@ -13,6 +13,14 @@ This guide prepares the existing app for `https://mkemagic.com`. It does not dep
 
 The repository cannot determine hosted Auth toggles, SMTP settings, DNS state, Vercel account settings, or member email addresses. Complete the dashboard checks below before launch.
 
+## Launch phase: public site first, member invitations later
+
+The user-confirmed hosted snapshot contains **142 valid games and 569 seats**: the original 141-game/565-seat import remains the historical baseline, with one legitimate later game and its four seats retained separately. Current totals are 6 members, 62 member-owned decks, and 127 commanders. The historical contract still validates 141 imported games, 61 imported decks, 126 imported commanders, and 97 eligible historical four-player games. Do not edit or remove the later game to make the import baseline match current totals.
+
+The only approved account needed for the initial launch is Will's administrator account. The other five members do not need Auth accounts to browse Dashboard, Players, Decks, Games, or Analytics. Tracking retains its sign-in screen, while game-entry actions and Play access require an approved membership. Corrections and deletions remain restricted to Will's administrator role in database policies.
+
+After the site is deployed and the production domain works, configure custom SMTP and test the invitation flow with the owner's alternate email. Do not map that test account to a playgroup player. Accept the test invitation, verify it can sign in but cannot access member-only Tracking actions or Play, and verify public pages still work signed out. Then remove the temporary test Auth user. Only after that check succeeds should the five members be invited and mapped using the procedure below. No invitations or accounts are created by this preparation.
+
 ## Application and local checks
 
 The project uses Next.js 16.4.6 and requires Node.js 20.9 or newer ([Next.js installation requirements](https://nextjs.org/docs/app/getting-started/installation)). Vercel currently offers Node 24.x, 22.x, and 20.x; choose **24.x** in Project Settings so production builds run on a supported current runtime ([Vercel Node.js versions](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions)). The `node --experimental-strip-types` test command requires a current Node release (22.6+); Node 24 is suitable for both the app and repository test scripts.
@@ -80,7 +88,7 @@ In Supabase Dashboard for project `tuiripvkrvlfvkgunohu`:
 
    The reset form passes the exact `/auth/confirm` redirect path. The email URL carries the one-time token; the app strips it from the browser address bar before the user confirms. Supabase's custom token-hash template pattern is documented in its [email template guide](https://supabase.com/docs/guides/auth/auth-email-templates).
 
-## Safely invite and map the five members
+## Safely invite and map the five members (after the SMTP test)
 
 The database schema uses `private.user_memberships(auth_user_id, player_id, role, approval_status)`. `auth_user_id` is the primary key and `player_id` is unique, so an Auth account and a playgroup player cannot be mapped more than once. Only privileged database administration can write this private table; ordinary users cannot claim identities by choosing a display name.
 
@@ -132,7 +140,7 @@ After each member signs in, verify the Tracking page shows the matching player n
 
 ## GitHub and Vercel setup (no remote is currently configured)
 
-The local repository is on `master`, has a clean base commit before these preparation changes, and has no Git remote. All app code and five SQL migrations are tracked. `.env.local`, private historical CSVs, `.next`, `node_modules`, `.vercel`, TypeScript build info, and common local secrets are ignored. There is no GitHub repository linked from this checkout.
+The local repository is on `master`, has a committed launch-preparation checkpoint, and has no Git remote. All app code and five SQL migrations are tracked. `.env.local`, private historical CSVs, `.next`, `node_modules`, `.vercel`, TypeScript build info, and common local secrets are ignored. There is no GitHub repository linked from this checkout.
 
 After reviewing this change set and approving source upload:
 
@@ -148,7 +156,7 @@ After reviewing this change set and approving source upload:
 4. Select Node.js **24.x** in Project Settings → Build and Deployment.
 5. Add only `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to the **Production** environment. Vercel applies environment variables on new deployments, not existing ones ([environment variable scopes](https://vercel.com/docs/environment-variables)). Keep preview deploys disabled or password-protected; if they need the production public variables to build, treat the preview as production-data-connected and test only with database permissions in mind.
 6. Add `mkemagic.com` and `www.mkemagic.com` in Project Settings → Domains. Set `mkemagic.com` as primary and configure `www.mkemagic.com` as a redirect to it.
-7. Wait for the first successful deployment before switching DNS. In Porkbun → Domain Management → `mkemagic.com` → DNS, enter the exact values Vercel displays. Vercel's current generic values are an apex A record `@ → 76.76.21.21` and a `www` CNAME to `cname.vercel-dns-0.com`; use project-specific dashboard values if they differ. Remove only conflicting web A/AAAA/CNAME records for `@` or `www`. Keep email MX/TXT records and any provider records intact.
+7. Wait for the first successful deployment before switching DNS. In Porkbun → Domain Management → `mkemagic.com` → DNS, enter the exact record types and values Vercel displays for this project. Do not substitute generic DNS examples. Remove only conflicting web A/AAAA/CNAME records for `@` or `www`; keep email MX/TXT and provider records intact.
 8. Wait until Vercel reports the domain and certificate as valid. Confirm `https://www.mkemagic.com` redirects to `https://mkemagic.com` and both resolve over HTTPS. Vercel documents domain setup and the exact records in its [custom domain guide](https://vercel.com/docs/domains/set-up-custom-domain).
 
 Vercel builds each production branch push. Do not push this repository or deploy until the owner approves those external changes.
@@ -160,10 +168,10 @@ Vercel builds each production branch push. Do not push this repository or deploy
 - Confirm a member can save their own Moxfield links but cannot change another member's links or any player/deck identity fields.
 - Confirm Will can correct/delete only with the administrator account and that corrections require a reason and produce private audit rows.
 - On a 375–430px iPhone Safari viewport, verify the navigation, auth forms, dashboard charts, Games, Tracking, and Play. Verify invitation and recovery emails arrive, confirm links work once, password updates succeed, and expired/reused links show a recovery path.
-- In Supabase, confirm game, member, and deck counts and migration history remain unchanged by the launch. Re-run historical/statistical checks after any approved new games using the established baseline plus new records.
+- In Supabase, confirm the 141-game import baseline separately from current totals (currently 142 games and 569 seats), and confirm member/deck counts and migration history remain unchanged by the launch. Re-run historical/statistical checks after any approved new games using the established baseline plus new records.
 
 ## Known review boundaries
 
 - Supabase hosted Auth toggles, SMTP credentials/templates, email delivery, Porkbun DNS, Vercel settings, and the members' email addresses are account-level settings and require owner action; they were not changed by this project work.
-- Real invite/recovery email delivery cannot be fully exercised until custom SMTP is configured. No member accounts or hosted records were created for this preparation.
+- Real invite/recovery email delivery cannot be fully exercised until custom SMTP is configured. No invitations or additional member Auth accounts were created for this preparation; Will remains the approved administrator. The user-confirmed post-import game is legitimate and remains in the 142-game live total without changing the separate 141-game import baseline.
 - `/play` is gated by a server-verified approved membership. Its life state is browser-local by design; this readiness review does not add cloud persistence.
