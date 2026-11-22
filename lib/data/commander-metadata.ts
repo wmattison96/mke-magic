@@ -8,34 +8,44 @@ interface ScryfallCard {
   card_faces?: Array<{ image_uris?: { art_crop?: string; normal?: string } }>;
 }
 
-let requestQueue: Promise<unknown> = Promise.resolve();
+let requestStartQueue: Promise<void> = Promise.resolve();
 let lastRequestAt = 0;
+const cardLookups = new Map<string, Promise<ScryfallCard | null>>();
 
-function pacedRequest(url: URL): Promise<Response | null> {
-  const request = requestQueue.then(async () => {
+function scheduleRequestStart(): Promise<void> {
+  const scheduled = requestStartQueue.then(async () => {
     const now = performance.now();
     const waitMs = Math.max(0, 125 - (now - lastRequestAt));
     if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
     lastRequestAt = performance.now();
-    try {
-      return await fetch(url, {
-        cache: "force-cache",
-        next: { revalidate: 60 * 60 * 24 * 30 },
-        headers: {
-          Accept: "application/json;q=0.9,*/*;q=0.8",
-          "User-Agent": "ManaTablePlaygroup/1.0 (commander metadata lookup)",
-        },
-        signal: AbortSignal.timeout(7000),
-      });
-    } catch {
-      return null;
-    }
   });
-  requestQueue = request.then(() => undefined, () => undefined);
-  return request;
+  requestStartQueue = scheduled.then(() => undefined, () => undefined);
+  return scheduled;
 }
 
-async function lookupExactCard(name: string): Promise<ScryfallCard | null> {
+async function pacedRequest(url: URL): Promise<Response | null> {
+  await scheduleRequestStart();
+  try {
+    return await fetch(url, {
+      cache: "force-cache",
+      next: { revalidate: 60 * 60 * 24 * 30 },
+      headers: {
+        Accept: "application/json;q=0.9,*/*;q=0.8",
+        "User-Agent": "ManaTablePlaygroup/1.0 (commander metadata lookup)",
+      },
+      signal: AbortSignal.timeout(7000),
+    });
+  } catch {
+    return null;
+  }
+}
+
+function lookupExactCard(name: string): Promise<ScryfallCard | null> {
+  const key = name.trim().toLocaleLowerCase();
+  const cached = cardLookups.get(key);
+  if (cached) return cached;
+
+  const lookup = (async () => {
   const url = new URL("https://api.scryfall.com/cards/named");
   url.searchParams.set("exact", name);
   const response = await pacedRequest(url);
@@ -45,6 +55,12 @@ async function lookupExactCard(name: string): Promise<ScryfallCard | null> {
   } catch {
     return null;
   }
+  })();
+  cardLookups.set(key, lookup);
+  void lookup.then((card) => {
+    if (card === null && cardLookups.get(key) === lookup) cardLookups.delete(key);
+  });
+  return lookup;
 }
 
 function artwork(card: ScryfallCard | null): string | null {
@@ -54,6 +70,20 @@ function artwork(card: ScryfallCard | null): string | null {
     ?? card.image_uris?.art_crop
     ?? card.card_faces?.[0]?.image_uris?.art_crop
     ?? null;
+}
+
+/** Shares the existing paced, cached Scryfall lookup with Play's commander backgrounds. */
+export async function getCommanderArtForName(name: string): Promise<string | null> {
+  const normalized = name.trim();
+  if (normalized.length < 2 || normalized.length > 80) return null;
+  const imageUrl = artwork(await lookupExactCard(normalized));
+  if (!imageUrl) return null;
+  try {
+    const parsed = new URL(imageUrl);
+    return parsed.protocol === "https:" && parsed.hostname === "cards.scryfall.io" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 function verifiedColors(card: ScryfallCard): ColorIdentity[] | null {
@@ -73,18 +103,14 @@ export async function getCommanderMetadata(decks: ProfileDeck[]): Promise<Map<st
   for (const deck of decks) byCommander.set(deck.commanderId, { id: deck.commanderId, name: deck.commanderName });
   const result = new Map<string, CommanderMetadata>();
 
-  for (const commander of byCommander.values()) {
+  await Promise.all([...byCommander.values()].map(async (commander) => {
     const names = commander.name.split(/\s+\/\s+(?!\/)/).map((name) => name.trim()).filter(Boolean);
-    const cards: ScryfallCard[] = [];
-    for (const name of names) {
-      const card = await lookupExactCard(name);
-      if (!card) break;
-      cards.push(card);
-    }
+    const results = await Promise.all(names.map(lookupExactCard));
+    const cards = results.filter((card): card is ScryfallCard => card !== null);
     const colors = cards.length === names.length && cards.length > 0
       ? combineCommanderColorIdentities(cards.map(verifiedColors))
       : null;
-    result.set(commander.id, { colors, artUrl: artwork(cards[0] ?? null) });
-  }
+    result.set(commander.id, { colors, artUrl: artwork(results[0] ?? null) });
+  }));
   return result;
 }

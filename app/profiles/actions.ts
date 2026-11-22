@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
+import { PUBLIC_DECKS_TAG, PUBLIC_PLAYERS_TAG } from "@/lib/data/cache-tags";
 import { normalizeMoxfieldUrl } from "@/lib/profiles/moxfield-url";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentMemberContext } from "@/lib/supabase/verified-user";
@@ -29,5 +30,6 @@ export async function saveMoxfieldUrl(_previous: MoxfieldActionState, formData: 
   revalidatePath(`/players/${recordId}`);
   revalidatePath("/decks");
   revalidatePath(`/decks/${recordId}`);
+  updateTag(type === "player" ? PUBLIC_PLAYERS_TAG : PUBLIC_DECKS_TAG);
   return { success: value ? "Moxfield link saved." : "Moxfield link removed." };
 }

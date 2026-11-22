@@ -1,5 +1,7 @@
 import "server-only";
-import { createClient } from "@/lib/supabase/server";
+import { cacheLife, cacheTag } from "next/cache";
+import { PUBLIC_GAME_LOG_TAG } from "@/lib/data/cache-tags";
+import { createPublicClient } from "@/lib/supabase/public";
 import { getEligibility, type HistoricalResult } from "@/lib/historical/model";
 
 type GameRow = {
@@ -60,7 +62,11 @@ export interface PublicGameLogEntry {
 
 /** Reads only the safe projections; raw CSV and private provenance are never used at runtime. */
 export async function getPublicGameLog(limit = Number.POSITIVE_INFINITY): Promise<PublicGameLogEntry[]> {
-  const supabase = await createClient();
+  "use cache";
+  cacheLife("minutes");
+  cacheTag(PUBLIC_GAME_LOG_TAG);
+
+  const supabase = createPublicClient();
   const pageSize = 500;
   const requestedLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : Number.POSITIVE_INFINITY;
   const games: GameRow[] = [];

@@ -4,6 +4,10 @@ import { createClient } from "./server";
 /** Returns only claims verified by Supabase; never authorize from getSession(). */
 export async function getVerifiedUserClaims() {
   const supabase = await createClient();
+  return getVerifiedClaimsFromClient(supabase);
+}
+
+async function getVerifiedClaimsFromClient(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { data, error } = await supabase.auth.getClaims();
   if (error) {
     if ((error as { name?: string }).name === "AuthSessionMissingError") return null;
@@ -20,10 +24,10 @@ export interface MemberContext {
 }
 
 export async function getCurrentMemberContext(): Promise<MemberContext | null> {
-  const claims = await getVerifiedUserClaims();
+  const supabase = await createClient();
+  const claims = await getVerifiedClaimsFromClient(supabase);
   if (!claims?.sub) return null;
 
-  const supabase = await createClient();
   const { data, error } = await supabase.rpc("current_member_context");
   if (error) throw new Error("Unable to load this account's playgroup permissions.");
   return (data as MemberContext | null) ?? null;

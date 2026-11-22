@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { AppShell } from "@/components/app-shell";
 import { DashboardHome, DashboardLoadError, DashboardLoading } from "@/components/dashboard-home";
 import { getPublicGameLog } from "@/lib/data/public-game-log";
@@ -14,6 +15,7 @@ export default function Home() {
 }
 
 async function DashboardLiveData() {
+  await connection();
   const loaded = await Promise.all([getPublicGameLog(), getPublicPlayers()])
     .then(([games, players]) => ({ games, players }))
     .catch(() => null);

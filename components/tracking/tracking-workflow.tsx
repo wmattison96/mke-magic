@@ -2,14 +2,30 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createBrowserClient } from "@supabase/ssr";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { PageHeading, Panel } from "@/components/ui";
 import { createManualGame, type GameSubmission, type SubmittedSeat } from "@/app/tracking/actions";
+import { createClientId, withTimeout } from "@/lib/client/async";
 import type { TrackingCatalog } from "@/lib/data/tracking-catalog";
 import type { MemberContext } from "@/lib/supabase/verified-user";
 
 type CommanderChoice = { id: string | null; name: string | null };
-type DraftSeat = SubmittedSeat;
+export type DraftSeat = SubmittedSeat;
 type AccountState = "loading" | "signed_out" | "checking" | "approved" | "unapproved" | "error";
+const AUTH_TIMEOUT_MS = 12_000;
+
+function isMissingSession(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { name?: string; status?: number };
+  return value.name === "AuthSessionMissingError" || value.status === 401;
+}
+
+function accountCheckMessage(error: unknown) {
+  if (error instanceof Error && error.message.includes("timed out")) {
+    return "Supabase did not respond within 12 seconds. Check your Wi-Fi connection and retry the account check.";
+  }
+  return "The account or playgroup approval could not be checked. Confirm Supabase is reachable, then retry.";
+}
 
 function localToday() {
   const now = new Date();
@@ -114,18 +130,22 @@ function CommanderPicker({
   </div>;
 }
 
-function SeatEditor({
+export function SeatEditor({
   seat,
   catalog,
-  isWinner,
+  isWinner = false,
   onChange,
   onWinner,
+  showWinnerSelection = true,
+  excludeMemberIds = [],
 }: {
   seat: DraftSeat;
   catalog: TrackingCatalog;
-  isWinner: boolean;
+  isWinner?: boolean;
   onChange: (next: DraftSeat) => void;
-  onWinner: () => void;
+  onWinner?: () => void;
+  showWinnerSelection?: boolean;
+  excludeMemberIds?: string[];
 }) {
   const memberDecks = useMemo(() => catalog.decks.filter((deck) => deck.playerId === seat.playerId), [catalog.decks, seat.playerId]);
   const selectedDeck = memberDecks.find((deck) => deck.id === seat.deckId);
@@ -136,12 +156,12 @@ function SeatEditor({
   }
 
   return <section className={`rounded-2xl border p-4 sm:p-5 ${isWinner ? "border-emerald-300 bg-emerald-50/40" : "border-slate-200 bg-white"}`}>
-    <div className="mb-4 flex items-center justify-between gap-3"><div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-600">{seat.seat}</span><div><h3 className="text-sm font-semibold text-slate-800">Seat {seat.seat}</h3><p className="text-[10px] text-slate-400">Choose player and commander</p></div></div>
-      <label className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-[10px] font-semibold ${isWinner ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500"}`}><input type="radio" name="winning-seat" checked={isWinner} onChange={onWinner} className="accent-emerald-600"/>Winning seat</label>
+    <div className="mb-4 flex items-center justify-between gap-3"><div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-600">{seat.seat}</span><div><h3 className="text-sm font-semibold text-slate-800">Seat {seat.seat}</h3><p className="text-[10px] text-slate-400">{seat.seat === 1 ? "Starts first · choose player and commander" : "Choose player and commander"}</p></div></div>
+      {showWinnerSelection && <label className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-[10px] font-semibold ${isWinner ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500"}`}><input type="radio" name="winning-seat" checked={isWinner} onChange={onWinner} className="accent-emerald-600"/>Winning seat</label>}
     </div>
     <div className="grid gap-3 sm:grid-cols-2">
       <label className="text-[10px] font-medium text-slate-500">Participant type<select value={seat.participantType} onChange={(event) => onChange({ ...seat, participantType: event.target.value as DraftSeat["participantType"], playerId: null, deckId: null, commanderId: null, commanderName: null })} className={inputClass}><option value="member">Playgroup member</option><option value="guest">Guest</option></select></label>
-      {seat.participantType === "member" ? <label className="text-[10px] font-medium text-slate-500">Member<select value={seat.playerId ?? ""} onChange={(event) => onChange({ ...seat, playerId: event.target.value || null, deckId: null, commanderId: null, commanderName: null })} className={inputClass}><option value="">Choose a member</option>{catalog.players.map((player) => <option key={player.id} value={player.id}>{player.name}</option>)}</select></label> : <div className="flex items-end"><div className="w-full rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-500">Guest seat · no account or saved deck</div></div>}
+      {seat.participantType === "member" ? <label className="text-[10px] font-medium text-slate-500">Member<select value={seat.playerId ?? ""} onChange={(event) => onChange({ ...seat, playerId: event.target.value || null, deckId: null, commanderId: null, commanderName: null })} className={inputClass}><option value="">Choose a member</option>{catalog.players.map((player) => <option key={player.id} value={player.id} disabled={excludeMemberIds.includes(player.id) && player.id !== seat.playerId}>{player.name}{excludeMemberIds.includes(player.id) && player.id !== seat.playerId ? " · already seated" : ""}</option>)}</select></label> : <div className="flex items-end"><div className="w-full rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-500">Guest seat · no account or saved deck</div></div>}
       {seat.participantType === "member" && <label className="text-[10px] font-medium text-slate-500 sm:col-span-2">Owned deck<select disabled={!seat.playerId} value={seat.deckId ?? ""} onChange={(event) => {
         const deck = memberDecks.find((item) => item.id === event.target.value);
         if (deck) onChange({ ...seat, deckId: deck.id, commanderId: deck.commanderId, commanderName: deck.commanderName });
@@ -155,9 +175,11 @@ function SeatEditor({
 function LoginCard({
   client,
   onAccount,
+  onRetry,
 }: {
   client: ReturnType<typeof createBrowserClient> | null;
-  onAccount: (state: AccountState, context?: MemberContext | null) => void;
+  onAccount: (state: AccountState, context?: MemberContext | null, message?: string) => void;
+  onRetry: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -169,22 +191,25 @@ function LoginCard({
     if (!client) return;
     setMessage("");
     startBusy(async () => {
-      const { data, error } = await client.auth.signInWithPassword({ email: email.trim(), password });
-      if (error || !data.user) {
+      try {
+        const signInRequest = client.auth.signInWithPassword({ email: email.trim(), password });
+        const { data, error } = await withTimeout(
+          signInRequest,
+          AUTH_TIMEOUT_MS,
+          "Sign-in timed out.",
+        ) as Awaited<typeof signInRequest>;
+        if (error || !data.user) {
+          onAccount("signed_out");
+          setMessage("Sign-in failed. Check the email and password for your Supabase Auth account.");
+          return;
+        }
+        setPassword("");
+        onAccount("checking");
+        onRetry();
+      } catch (cause) {
         onAccount("signed_out");
-        setMessage("Sign-in failed. Check the email and password for your Supabase Auth account.");
-        return;
+        setMessage(cause instanceof Error ? cause.message : "Sign-in could not be completed. Try again.");
       }
-      onAccount("checking");
-      const { data: context, error: contextError } = await client.rpc("current_member_context");
-      if (contextError) {
-        onAccount("error");
-        setMessage("You signed in, but your playgroup approval could not be checked. Try again shortly.");
-        return;
-      }
-      const member = (context as MemberContext | null) ?? null;
-      onAccount(member?.approvalStatus === "approved" ? "approved" : "unapproved", member);
-      setPassword("");
     });
   }
 
@@ -212,11 +237,14 @@ export function TrackingWorkflow({ catalog }: { catalog: TrackingCatalog }) {
   const [review, setReview] = useState(false);
   const [saved, setSaved] = useState<{ gameNumber: number; gameId: string } | null>(null);
   const [error, setError] = useState("");
+  const [authError, setAuthError] = useState("");
   const [saving, startSaving] = useTransition();
+  const retryAuthRef = useRef<(() => void) | null>(null);
 
-  const setAccount = useCallback((state: AccountState, context: MemberContext | null = null) => {
+  const setAccount = useCallback((state: AccountState, context: MemberContext | null = null, message = "") => {
     setAccountState(state);
     setMemberContext(context);
+    setAuthError(state === "error" ? message || "The account check failed. Retry when Supabase is reachable." : "");
     if (state === "approved" && context?.playerId) {
       setSeats((current) => current.map((seat) => seat.seat === 1 && seat.participantType === "member" && !seat.playerId
         ? { ...seat, playerId: context.playerId }
@@ -228,52 +256,106 @@ export function TrackingWorkflow({ catalog }: { catalog: TrackingCatalog }) {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
     if (!url || !key) {
-      const timer = window.setTimeout(() => setAccountState("error"), 0);
+      const timer = window.setTimeout(() => setAccount("error", null, "Supabase browser configuration is missing. Add the public URL and publishable key to .env.local, then restart the server."), 0);
       return () => window.clearTimeout(timer);
     }
-    const supabase = createBrowserClient(url, key);
+    let supabase: ReturnType<typeof createBrowserClient>;
+    try {
+      supabase = createBrowserClient(url, key);
+    } catch {
+      const timer = window.setTimeout(() => setAccount("error", null, "The Supabase browser client could not be initialized. Check the public URL and publishable key, then retry."), 0);
+      return () => window.clearTimeout(timer);
+    }
 
     let active = true;
+    let initializeTimer: number | null = null;
+    let contextCheckTimer: number | null = null;
+    let checkSequence = 0;
     const loadContext = async () => {
+      const sequence = ++checkSequence;
       setAccountState("checking");
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (!active) return;
-      if (userError) {
-        setAccount((userError as { name?: string }).name === "AuthSessionMissingError" ? "signed_out" : "error");
-        return;
+      setAuthError("");
+      try {
+        const sessionRequest = supabase.auth.getSession();
+        const { data: sessionData, error: sessionError } = await withTimeout(
+          sessionRequest,
+          AUTH_TIMEOUT_MS,
+          "Session recovery timed out.",
+        ) as Awaited<typeof sessionRequest>;
+        if (!active || sequence !== checkSequence) return;
+        if (sessionError) throw sessionError;
+        if (!sessionData.session?.user) {
+          setAccount("signed_out");
+          return;
+        }
+
+        // getSession only discovers the local session; authorization uses the verified user response and RLS.
+        const userRequest = supabase.auth.getUser();
+        const { data: userData, error: userError } = await withTimeout(
+          userRequest,
+          AUTH_TIMEOUT_MS,
+          "Account verification timed out.",
+        ) as Awaited<typeof userRequest>;
+        if (!active || sequence !== checkSequence) return;
+        if (userError) {
+          if (isMissingSession(userError)) {
+            setAccount("signed_out");
+            return;
+          }
+          throw userError;
+        }
+        if (!userData.user) {
+          setAccount("signed_out");
+          return;
+        }
+
+        const contextRequest = supabase.rpc("current_member_context");
+        const { data, error: contextError } = await withTimeout(
+          Promise.resolve(contextRequest),
+          AUTH_TIMEOUT_MS,
+          "Playgroup approval check timed out.",
+        ) as Awaited<typeof contextRequest>;
+        if (!active || sequence !== checkSequence) return;
+        if (contextError) throw contextError;
+        const context = (data as MemberContext | null) ?? null;
+        setAccount(context?.approvalStatus === "approved" ? "approved" : "unapproved", context);
+      } catch (cause) {
+        if (active && sequence === checkSequence) setAccount("error", null, accountCheckMessage(cause));
       }
-      if (!userData.user) {
-        setAccount("signed_out");
-        return;
-      }
-      const { data, error: contextError } = await supabase.rpc("current_member_context");
-      if (!active) return;
-      if (contextError) {
-        setAccount("error");
-        return;
-      }
-      const context = (data as MemberContext | null) ?? null;
-      setAccount(context?.approvalStatus === "approved" ? "approved" : "unapproved", context);
     };
-    const contextTimer = window.setTimeout(() => {
+    const scheduleContextCheck = () => {
+      if (contextCheckTimer !== null) return;
+      contextCheckTimer = window.setTimeout(() => {
+        contextCheckTimer = null;
+        void loadContext();
+      }, 0);
+    };
+    retryAuthRef.current = scheduleContextCheck;
+    initializeTimer = window.setTimeout(() => {
       setClient(supabase);
       setPlayedOn(localToday());
-      setSubmissionId(crypto.randomUUID());
+      setSubmissionId(createClientId());
       void loadContext();
     }, 0);
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       if (!active) return;
-      if (!session?.user) {
+      if (event === "INITIAL_SESSION") return;
+      if (event === "SIGNED_OUT" || !session?.user) {
+        checkSequence += 1;
         setAccount("signed_out");
       } else {
-        // Keep the auth callback synchronous; refresh private membership context afterward.
-        window.setTimeout(() => { if (active) void loadContext(); }, 0);
+        // Do not await inside Supabase's auth callback; schedule one verified read after it releases its lock.
+        scheduleContextCheck();
       }
     });
 
     return () => {
       active = false;
-      window.clearTimeout(contextTimer);
+      checkSequence += 1;
+      if (initializeTimer !== null) window.clearTimeout(initializeTimer);
+      if (contextCheckTimer !== null) window.clearTimeout(contextCheckTimer);
+      retryAuthRef.current = null;
       subscription.unsubscribe();
     };
   }, [setAccount]);
@@ -336,7 +418,7 @@ export function TrackingWorkflow({ catalog }: { catalog: TrackingCatalog }) {
 
   function startAnotherGame() {
     setSaved(null);
-    setSubmissionId(crypto.randomUUID());
+    setSubmissionId(createClientId());
     setSeats(initialSeats());
     setWinningSeat(null);
     setPlayedOn(localToday());
@@ -352,8 +434,8 @@ export function TrackingWorkflow({ catalog }: { catalog: TrackingCatalog }) {
     <PageHeading eyebrow="AFTER THE GAME" title="Game tracking" description="Record the finished pod once, review the seats, and save it to the shared playgroup history."/>
 
     {accountState === "loading" || accountState === "checking" ? <Panel title="Checking account access"><div role="status" className="p-6 text-xs text-slate-500">Verifying your Supabase account and playgroup approval…</div></Panel> : null}
-    {accountState === "error" && <Panel title="Authentication unavailable"><div className="p-6"><p role="alert" className="text-sm text-rose-700">The account or playgroup permissions could not be checked. Confirm Supabase is reachable, then reload this page.</p>{!client && <p className="mt-2 text-xs text-slate-500">Also verify NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY in .env.local.</p>}</div></Panel>}
-    {accountState === "signed_out" && <LoginCard client={client} onAccount={setAccount}/>}
+    {accountState === "error" && <Panel title="Authentication unavailable"><div className="space-y-4 p-6"><p role="alert" className="text-sm leading-6 text-rose-700">{authError || "The account or playgroup permissions could not be checked."}</p>{!client && <p className="text-xs text-slate-500">Also verify NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY in .env.local.</p>}{client && <button type="button" onClick={() => { setAccountState("checking"); retryAuthRef.current?.(); }} className="w-fit rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-medium text-white">Retry account check</button>}</div></Panel>}
+    {accountState === "signed_out" && <LoginCard client={client} onAccount={setAccount} onRetry={() => retryAuthRef.current?.()}/>}
     {accountState === "unapproved" && <Panel title="Account needs playgroup approval"><div className="space-y-4 p-5 sm:p-6"><p className="text-sm leading-6 text-slate-600">This Auth account is signed in, but it is not mapped to an approved playgroup member. Ask the administrator to approve and map the account before recording games.</p><button onClick={() => client?.auth.signOut()} className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-medium text-slate-600">Sign out</button></div></Panel>}
 
     {accountState === "approved" && <>

@@ -1,21 +1,42 @@
+import { Suspense } from "react";
+import { connection } from "next/server";
+import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
+import { PlayWorkflow } from "@/components/play/play-workflow";
+import { getTrackingCatalog, type TrackingCatalog } from "@/lib/data/tracking-catalog";
+import { getCurrentMemberContext, type MemberContext } from "@/lib/supabase/verified-user";
+
+export const instant = false;
 
 export default function PlayPage() {
-  return <AppShell activePath="/play">
-    <section className="mx-auto max-w-3xl">
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <div>
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[.18em] text-indigo-600">COMING LATER</p>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Play</h1>
-        </div>
-      </div>
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-        <div className="mb-4 grid size-11 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
-          <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M8 7h8a4 4 0 0 1 3.8 5.2l-1 3.2a2 2 0 0 1-3.3.9L13.5 13h-3l-2 3.3a2 2 0 0 1-3.3-.9l-1-3.2A4 4 0 0 1 8 7Z"/><path d="M8 9v4M6 11h4M16 10h.01M18 12h.01"/></svg>
-        </div>
-        <h2 className="text-sm font-semibold text-slate-900">Live game tracking is planned for a later milestone.</h2>
-        <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">This space is a placeholder for a future play session flow. It does not start a game or save any data yet.</p>
-      </div>
-    </section>
-  </AppShell>;
+  return <AppShell activePath="/play"><Suspense fallback={<PlayLoading/>}><PlayLive/></Suspense></AppShell>;
+}
+
+function PlayLoading() {
+  return <div className="mx-auto max-w-2xl px-4 py-12"><div role="status" aria-busy="true" className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">Verifying account access and loading Play…</div></div>;
+}
+
+async function PlayLive() {
+  await connection();
+  let context: MemberContext | null = null;
+  let catalog: TrackingCatalog | null = null;
+  let accessError = false;
+  try {
+    context = await getCurrentMemberContext();
+  } catch {
+    accessError = true;
+  }
+  if (!accessError && context?.approvalStatus === "approved") {
+    try {
+      catalog = await getTrackingCatalog();
+    } catch {
+      catalog = null;
+    }
+  }
+
+  return <>
+    {accessError ? <section className="mx-auto max-w-2xl px-4 py-12"><div className="rounded-2xl border border-rose-100 bg-white p-6 shadow-sm"><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-rose-600">Account check unavailable</p><h1 className="mt-2 text-lg font-semibold text-slate-900">Play could not verify your access</h1><p role="alert" className="mt-2 text-sm leading-6 text-slate-600">Reload when Supabase is reachable. The Play setup is hidden until the account and member approval can be verified.</p></div></section>
+      : context?.approvalStatus === "approved" ? <PlayWorkflow catalog={catalog} member={context}/>
+        : <section className="mx-auto max-w-2xl px-4 py-12 sm:py-16"><div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8"><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-indigo-600">Approved playgroup accounts</p><h1 className="mt-2 text-xl font-semibold tracking-tight text-slate-900">Sign in to start a game</h1><p className="mt-2 text-sm leading-6 text-slate-600">Only an approved member or administrator can open a Play session. Sign in through the existing Tracking page, then return here.</p>{context && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">This account is {context.approvalStatus}. Ask the administrator to approve and map it to a playgroup member before using Play.</p>}<Link href="/tracking" className="mt-5 inline-flex rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white">Go to Tracking sign-in</Link></div></section>}
+  </>;
 }

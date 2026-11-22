@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
+import { PUBLIC_COMMANDERS_TAG, PUBLIC_DECKS_TAG, PUBLIC_GAME_LOG_TAG } from "@/lib/data/cache-tags";
 import { createClient } from "@/lib/supabase/server";
 import { getVerifiedUserClaims } from "@/lib/supabase/verified-user";
 
@@ -99,5 +100,8 @@ export async function createManualGame(input: GameSubmission): Promise<CreateGam
   }
   revalidatePath("/games");
   revalidatePath("/");
+  updateTag(PUBLIC_GAME_LOG_TAG);
+  updateTag(PUBLIC_COMMANDERS_TAG);
+  updateTag(PUBLIC_DECKS_TAG);
   return { ok: true, gameId: row.game_id, gameNumberOnDate: Number(row.game_number_on_date) };
 }

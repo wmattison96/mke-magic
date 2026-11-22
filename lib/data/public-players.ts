@@ -1,10 +1,16 @@
 import "server-only";
-import { createClient } from "@/lib/supabase/server";
+import { cacheLife, cacheTag } from "next/cache";
+import { PUBLIC_PLAYERS_TAG } from "@/lib/data/cache-tags";
+import { createPublicClient } from "@/lib/supabase/public";
 import type { StatsPlayer } from "@/lib/stats/dashboard";
 
 /** Reads only the safe member projection; private auth mappings are not queried. */
 export async function getPublicPlayers(): Promise<StatsPlayer[]> {
-  const supabase = await createClient();
+  "use cache";
+  cacheLife("minutes");
+  cacheTag(PUBLIC_PLAYERS_TAG);
+
+  const supabase = createPublicClient();
   const { data, error } = await supabase
     .from("readable_players")
     .select("id,display_name,moxfield_url")

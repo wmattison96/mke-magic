@@ -8,7 +8,7 @@ const navigation: { label: string; href: string; icon: string; deferred?: boolea
   { label: "Games", href: "/games", icon: "swords" },
   { label: "Tracking", href: "/tracking", icon: "plus" },
   { label: "Analytics", href: "/analytics", icon: "chart" },
-  { label: "Play", href: "/play", icon: "play", deferred: true },
+  { label: "Play", href: "/play", icon: "play" },
 ];
 
 function NavIcon({ name }: { name: string }) {
@@ -47,8 +47,8 @@ function Navigation({ activePath, mobile = false }: { activePath: string; mobile
 }
 
 export function AppShell({ children, activePath }: { children: ReactNode; activePath: string }) {
-  const usesLiveRecords = activePath === "/" || activePath === "/games" || activePath === "/tracking" || activePath === "/players" || activePath === "/decks" || activePath === "/analytics";
-  const recordScope = activePath === "/" ? "Eligible 4-player statistics" : "All recorded pods";
+  const usesLiveRecords = activePath === "/" || activePath === "/games" || activePath === "/tracking" || activePath === "/players" || activePath === "/decks" || activePath === "/analytics" || activePath === "/play";
+  const recordScope = activePath === "/" ? "Eligible 4-player statistics" : activePath === "/play" ? "Four-player life tracker" : "All recorded pods";
   return <div className="min-h-screen bg-[#f4f6fa] text-slate-900 lg:flex">
     <aside className="hidden w-[250px] shrink-0 flex-col border-r border-slate-800 bg-[#111827] px-5 py-6 lg:sticky lg:top-0 lg:flex lg:h-screen">
       <Brand />
@@ -65,7 +65,7 @@ export function AppShell({ children, activePath }: { children: ReactNode; active
         <div className="flex items-center gap-2 text-xs text-slate-400"><span>Workspace</span><span>/</span><span className="font-medium text-slate-700">{usesLiveRecords ? "Shared playgroup" : "The Wednesday Pod"}</span><span className="ml-1 rounded-md bg-slate-100 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">{usesLiveRecords ? "Live records" : "Demo"}</span></div>
         <div className="flex items-center gap-4"><span className="text-xs text-slate-500">{usesLiveRecords ? recordScope : "Commander · 4-player pods"}</span><span className="grid size-9 place-items-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">MT</span></div>
       </header>
-      <main className="mx-auto w-full max-w-[1500px] px-4 py-7 sm:px-7 sm:py-9 xl:px-10">{children}</main>
+      <main className={activePath === "/play" ? "mx-auto min-h-[calc(100svh-128px)] w-full max-w-none p-0 lg:min-h-[calc(100vh-68px)]" : "mx-auto w-full max-w-[1500px] px-4 py-7 sm:px-7 sm:py-9 xl:px-10"}>{children}</main>
     </div>
   </div>;
 }

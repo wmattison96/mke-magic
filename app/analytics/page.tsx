@@ -30,6 +30,10 @@ function LoadingState() {
   return <div className="space-y-5" aria-label="Loading analytics" aria-busy="true"><div className="h-16 animate-pulse rounded-2xl bg-white"/><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[1, 2, 3, 4].map((item) => <div key={item} className="h-28 animate-pulse rounded-2xl bg-white"/>)}</div>{[1, 2, 3].map((item) => <div key={item} className="h-72 animate-pulse rounded-2xl bg-white"/>)}<p className="sr-only">Loading live analytics from the playgroup records.</p></div>;
 }
 
+function ColorMetagameLoading() {
+  return <Panel title="Color identity metagame" subtitle="Verified commander color identities from the public commander registry. Unknown identities are excluded, never treated as colorless."><p role="status" className="px-5 py-8 text-xs text-slate-400 sm:px-6">Loading commander color data… The rest of Analytics is ready to explore.</p></Panel>;
+}
+
 export default function AnalyticsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   return <AppShell activePath="/analytics"><Suspense fallback={<LoadingState/>}><AnalyticsLive searchParams={searchParams}/></Suspense></AppShell>;
 }
@@ -85,8 +89,6 @@ async function AnalyticsLive({ searchParams }: { searchParams: Promise<SearchPar
   );
   const trendDefaults = buildAnalyticsTrendDefaults(trendSeries, playerPerformance, deckPerformance, selectedDeckId);
   const trendPlayerSelectionKey = `${podFilter}:${range}:${population.coreFourOnlyApplied ? "core-four" : "all-members"}:${population.window.startDate ?? "all"}:${population.window.endDate}:${trendDefaults.playerDefaultIds.join(",")}`;
-  const commanderMetadata = await getCommanderMetadata(decks);
-  const colors = buildColorAnalysis(population.eligibleGames, players, decks, commanderMetadata);
   const rangeLabel = range === "all" ? "All time" : `Last ${range} days`;
   const filtered = population.coreFourOnlyApplied;
 
@@ -127,10 +129,24 @@ async function AnalyticsLive({ searchParams }: { searchParams: Promise<SearchPar
       />
       <div className="grid gap-5 xl:grid-cols-2"><SeatAnalysisPanel rows={seatRows}/><PlayerSeatExplorer rows={playerSeatRows} selectedPlayerId={selectedPlayerId}/></div>
       <CoreFourPanel rows={coreFourRows} eligibleGames={population.coreFourEligibleGames.length} enabled={podFilter === "4"}/>
-      <ColorMetagamePanel analysis={colors}/>
+      <Suspense fallback={<ColorMetagameLoading/>}><ColorMetagameData games={population.eligibleGames} players={players} decks={decks}/></Suspense>
       <p className="text-center text-[10px] leading-5 text-slate-400">All results use public Supabase game records. Games require at least two members and one winner for win statistics; multiplayer shared-pod rates are not head-to-head records. Guest details are not displayed.</p>
     </>}
   </div>;
+}
+
+async function ColorMetagameData({
+  games,
+  players,
+  decks,
+}: {
+  games: ReturnType<typeof buildAnalyticsPopulation>["eligibleGames"];
+  players: Awaited<ReturnType<typeof getPublicProfileData>>["players"];
+  decks: Awaited<ReturnType<typeof getPublicProfileData>>["decks"];
+}) {
+  const commanderMetadata = await getCommanderMetadata(decks);
+  const analysis = buildColorAnalysis(games, players, decks, commanderMetadata);
+  return <ColorMetagamePanel analysis={analysis}/>;
 }
 
 function selectId(requested: string | undefined, rows: Array<{ id: string; games: number; name: string }>, preferredName?: string): string {

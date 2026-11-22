@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
+import { PUBLIC_GAME_LOG_TAG } from "@/lib/data/cache-tags";
 import { createClient } from "@/lib/supabase/server";
 import { getVerifiedUserClaims } from "@/lib/supabase/verified-user";
 
@@ -48,6 +49,7 @@ export async function correctCompletedGame(input: CorrectionInput): Promise<Corr
   }
   revalidatePath("/games");
   revalidatePath("/");
+  updateTag(PUBLIC_GAME_LOG_TAG);
   return { ok: true };
 }
 
@@ -70,5 +72,6 @@ export async function deleteCompletedGame(gameId: string, reason: string): Promi
   }
   revalidatePath("/games");
   revalidatePath("/");
+  updateTag(PUBLIC_GAME_LOG_TAG);
   return { ok: true };
 }

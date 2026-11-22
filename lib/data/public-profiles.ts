@@ -1,7 +1,9 @@
 import "server-only";
+import { cacheLife, cacheTag } from "next/cache";
+import { PUBLIC_COMMANDERS_TAG, PUBLIC_DECKS_TAG } from "@/lib/data/cache-tags";
 import { getPublicGameLog } from "@/lib/data/public-game-log";
 import { getPublicPlayers } from "@/lib/data/public-players";
-import { createClient } from "@/lib/supabase/server";
+import { createPublicClient } from "@/lib/supabase/public";
 import type { StatsGame } from "@/lib/stats/dashboard";
 import type { ProfileDeck } from "@/lib/stats/profiles";
 
@@ -12,7 +14,11 @@ export interface PublicProfileData {
 }
 
 export async function getPublicDeckCatalog(): Promise<ProfileDeck[]> {
-  const supabase = await createClient();
+  "use cache";
+  cacheLife("minutes");
+  cacheTag(PUBLIC_DECKS_TAG);
+
+  const supabase = createPublicClient();
   const { data, error } = await supabase
     .from("readable_member_decks")
     .select("id,owner_player_id,owner_name,commander_id,canonical_name,deck_name,moxfield_url")
@@ -28,6 +34,20 @@ export async function getPublicDeckCatalog(): Promise<ProfileDeck[]> {
     name: row.deck_name,
     moxfieldUrl: row.moxfield_url,
   }));
+}
+
+export async function getPublicCommanderCatalog(): Promise<Array<{ id: string; name: string }>> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag(PUBLIC_COMMANDERS_TAG);
+
+  const supabase = createPublicClient();
+  const { data, error } = await supabase
+    .from("readable_commanders")
+    .select("id,canonical_name")
+    .order("canonical_name", { ascending: true });
+  if (error) throw new Error("Unable to load the public commander directory.");
+  return (data ?? []).map((row) => ({ id: row.id, name: row.canonical_name }));
 }
 
 export async function getPublicProfileData(): Promise<PublicProfileData> {
