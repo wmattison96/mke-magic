@@ -22,6 +22,7 @@ const expected = {
   distinct_original_alias_pairs: 204,
   all_guest_winner_seats: 28,
 };
+let verificationStage = "project connection validation";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -82,6 +83,7 @@ async function main() {
   let privateGuestNames;
   try {
     await client.connect();
+    verificationStage = "database identity and privilege check";
     const identity = (await client.query(
       "select current_user, session_user, current_database(), current_setting('server_version') as server_version, (select rolsuper or rolbypassrls from pg_catalog.pg_roles where rolname = current_user) as privileged",
     )).rows[0];
@@ -96,6 +98,7 @@ async function main() {
       "select id from private.import_batches where source_name = $1",
       [sourceName],
     )).rows;
+    verificationStage = "historical import batch and source rows";
     assert(batches.length === 1, "Expected exactly one approved historical import batch.");
     const batchId = batches[0].id;
     const games = (await client.query(
@@ -127,8 +130,8 @@ async function main() {
       excluded_less_than_two_members: 0,
       games_draw_or_shared_or_missing_winner: 0,
       date_carried_forward: 0,
-      unique_canonical_commanders: Number((await client.query("select count(*)::integer as count from public.commanders")).rows[0].count),
-      unique_member_decks: Number((await client.query("select count(*)::integer as count from public.member_decks")).rows[0].count),
+      unique_canonical_commanders: Number((await client.query("select count(*)::integer as count from public.commanders where historical_commander_key not like 'manual:%'")).rows[0].count),
+      unique_member_decks: Number((await client.query("select count(*)::integer as count from public.member_decks where historical_deck_key not like 'manual:%'")).rows[0].count),
       distinct_original_alias_pairs: Number((await client.query(
         "select count(*)::integer as count from private.commander_alias_provenance where import_batch_id = $1",
         [batchId],
@@ -195,6 +198,7 @@ async function main() {
       }
       if (rows.length !== Number(game.pod_size) || rows.filter((row) => row.participant_type === "member").length !== Number(game.member_count)) invalidRosters += 1;
     }
+    verificationStage = "historical dataset counts and game-roster validation";
     validateCounts(actual);
     assert(invalidRosters === 0, "One or more hosted rosters are incomplete.");
     assert(exceptionReferenceRows === 30, "Historical exception-reference count mismatch.");
@@ -209,6 +213,12 @@ async function main() {
       duplicate_daily_numbers: games.length - dailyNumbers.size,
     };
 
+    const currentTotals = (await client.query(
+      "select (select count(*)::integer from public.games) as current_games, (select count(*)::integer from public.game_participants) as current_seats, (select count(*)::integer from public.member_decks) as current_member_decks, (select count(*)::integer from public.commanders) as current_commanders, (select count(*)::integer from public.games where source in ('manual','play')) as games_since_import",
+    )).rows[0];
+    counts = { ...counts, ...currentTotals };
+
+    verificationStage = "private guest provenance and public-note scan";
     const privateNames = (await client.query(
       "select candidate.name from private.historical_game_provenance as provenance cross join lateral jsonb_array_elements(provenance.original_guest_names) as guest cross join lateral (values (guest.value ->> 'source_guest_name'), (guest.value ->> 'original_player_name')) as candidate(name) where provenance.import_batch_id = $1 and candidate.name is not null and length(candidate.name) >= 2",
       [batchId],
@@ -220,6 +230,7 @@ async function main() {
     )).rows.map((row) => row.public_notes);
     assert(storedNotes.every((note) => !containsGuestName(note, privateGuestNames)), "A stored public note exposes a private guest name.");
 
+    verificationStage = "database RLS policies and grants";
     const rlsRows = (await client.query(
       "select schema.nspname as schema_name, relation.relname, relation.relrowsecurity, relation.relforcerowsecurity from pg_catalog.pg_class as relation join pg_catalog.pg_namespace as schema on schema.oid = relation.relnamespace where relation.relkind = 'r' and ((schema.nspname = 'public' and relation.relname in ('players','commanders','member_decks','games','game_participants')) or (schema.nspname = 'private' and relation.relname in ('user_memberships','import_batches','historical_game_provenance','commander_alias_provenance','game_audit')))",
     )).rows;
@@ -250,14 +261,20 @@ async function main() {
     )).rows[0];
     assert(!privateGrants.anon_schema && !privateGrants.anon_provenance && !privateGrants.auth_provenance, "Private guest provenance grants are too broad.");
 
+    verificationStage = "anonymous and unmapped-user authorization probes";
     await client.query("begin");
+    verificationStage = "anonymous public-read and write-denial checks";
     await client.query("set local role anon");
     const anonGameCount = Number((await client.query("select count(*)::integer as count from public.readable_games where source = 'spreadsheet'")).rows[0].count);
     const anonParticipants = (await client.query("select participant_type, public_player_name from public.readable_game_participants")).rows;
+    const anonHistoricalParticipantCount = Number((await client.query(
+      "select count(*)::integer as count from public.readable_game_participants as participant join public.games as game on game.id = participant.game_id where game.source = 'spreadsheet'",
+    )).rows[0].count);
     const anonPrivateDenied = await expectDenied(client, "select * from private.historical_game_provenance limit 1");
     const anonInsertDenied = await expectDenied(client, "insert into public.games (played_on,pod_size,member_count,result_type,winning_seat,source,date_origin) values (current_date,3,2,'single_winner',1,'manual','manual')");
 
     await client.query("reset role");
+    verificationStage = "unmapped authenticated-user read and write-denial checks";
     await client.query("set local role authenticated");
     const testAuthId = randomUUID();
     await client.query("select set_config('request.jwt.claim.sub',$1,true)", [testAuthId]);
@@ -272,7 +289,23 @@ async function main() {
     const authParticipantUpdateDenied = participant ? await expectDenied(client, "update public.game_participants set seat = seat where game_id = '" + participant.game_id + "' and seat = " + Number(participant.seat)) : true;
     const authParticipantDeleteDenied = participant ? await expectDenied(client, "delete from public.game_participants where game_id = '" + participant.game_id + "' and seat = " + Number(participant.seat)) : true;
     await client.query("rollback");
-    assert(anonGameCount === 141 && anonParticipants.length === 565, "Anonymous safe reads failed.");
+    verificationStage = "asserting anonymous and unmapped-user authorization results";
+    console.log("Read-only authorization probes: " + JSON.stringify({
+      anonHistoricalGames: anonGameCount,
+      anonPublicSeats: anonParticipants.length,
+      anonHistoricalSeats: anonHistoricalParticipantCount,
+      anonGuestLabelsSanitized: anonParticipants.every((row) => row.participant_type !== "guest" || row.public_player_name === "Guest"),
+      anonPrivateReadDenied: anonPrivateDenied,
+      anonInsertDenied,
+      unmappedMembershipRejected: testMembership.approved === false && testMembership.admin === false,
+      unmappedPrivateReadDenied: authPrivateDenied,
+      unmappedInsertDenied: authInsertDenied,
+      unmappedGameUpdateDenied: authGameUpdateDenied,
+      unmappedGameDeleteDenied: authGameDeleteDenied,
+      unmappedParticipantUpdateDenied: authParticipantUpdateDenied,
+      unmappedParticipantDeleteDenied: authParticipantDeleteDenied,
+    }));
+    assert(anonGameCount === 141 && anonHistoricalParticipantCount === 565, "Anonymous historical safe reads failed.");
     assert(anonParticipants.every((row) => row.participant_type !== "guest" || row.public_player_name === "Guest"), "Anonymous participant read exposed a guest name.");
     assert(anonPrivateDenied && anonInsertDenied, "Anonymous private-read or write denial failed.");
     assert(testMembership.approved === false && testMembership.admin === false, "Synthetic unmapped identity unexpectedly received membership privileges.");
@@ -296,6 +329,7 @@ async function main() {
     await client.end().catch(() => {});
   }
 
+  verificationStage = "public REST projection and guest-privacy checks";
   const publicGames = await safePublicRows(projectUrl, publicKey, "readable_games", {
     select: "id,source,public_notes,location",
     source: "eq.spreadsheet",
@@ -314,7 +348,7 @@ async function main() {
   assert(publicParticipants.filter((row) => row.participant_type === "guest" && row.is_winner).length === expected.all_guest_winner_seats, "Public guest-winning seat count differs from the source contract.");
 
   console.log("Hosted database verification passed for project " + expectedProjectRef + ".");
-  console.log("Reconciled counts: " + JSON.stringify(counts));
+  console.log("Reconciled historical baseline and current append-only totals: " + JSON.stringify(counts));
   console.log("Authorization/privacy checks: " + JSON.stringify(securitySummary));
   console.log("Public projections passed: 141 games, 565 seats, all guest labels sanitized, no raw guest-name fields.");
   console.log("Approved member and administrator mutation paths were exercised in rollback-only Prompt 3 tests.");
@@ -322,6 +356,6 @@ async function main() {
 
 main().catch((error) => {
   const code = error?.code ? " (database error " + error.code + ")" : "";
-  console.error("Hosted database verification failed" + code + ".");
+  console.error("Hosted database verification failed during " + verificationStage + code + ".");
   process.exitCode = 1;
 });

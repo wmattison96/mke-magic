@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import Link from "next/link";
 import { PageHeading, Panel } from "@/components/ui";
 import { createManualGame, type GameSubmission, type SubmittedSeat } from "@/app/tracking/actions";
 import { createClientId, withTimeout } from "@/lib/client/async";
@@ -218,6 +219,8 @@ function LoginCard({
       <label className="text-xs font-medium text-slate-600">Email<input required type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"/></label>
       <label className="text-xs font-medium text-slate-600">Password<input required type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"/></label>
       <button disabled={busy || !client} className="w-fit rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-medium text-white disabled:opacity-50">{busy ? "Signing in…" : "Sign in"}</button>
+      <Link href="/auth/forgot-password" className="w-fit text-xs font-medium text-indigo-700 hover:text-indigo-900">Forgot your password?</Link>
+      <p className="text-[11px] leading-5 text-slate-400">MKE Magic accounts are invite-only. Ask the playgroup administrator if you need an account.</p>
       {message && <p role="alert" className="text-xs text-rose-700">{message}</p>}
       {!client && <p role="alert" className="text-xs text-rose-700">Supabase browser configuration is missing. Add the public project URL and publishable key to .env.local, then restart the server.</p>}
     </form>

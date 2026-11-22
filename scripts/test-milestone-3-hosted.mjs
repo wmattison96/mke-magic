@@ -26,6 +26,16 @@ async function expectSqlError(client, expectedCode, label, operation) {
   assert(receivedCode === expectedCode, label + " returned " + (receivedCode ?? "no error") + " instead of the expected rejection.");
 }
 
+async function readMoxfieldSnapshot(client) {
+  const players = (await client.query(
+    "select historical_player_key, moxfield_url from public.players where historical_player_key in ('will','manfred') order by historical_player_key",
+  )).rows;
+  const decks = (await client.query(
+    "select player.historical_player_key, deck.historical_deck_key, deck.moxfield_url from public.member_decks as deck join public.players as player on player.id = deck.owner_player_id where player.historical_player_key in ('will','manfred') order by player.historical_player_key, deck.historical_deck_key",
+  )).rows;
+  return JSON.stringify({ players, decks });
+}
+
 async function main() {
   const connectionString = process.env.SUPABASE_DB_URL;
   const projectUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -51,8 +61,9 @@ async function main() {
     const appliedVersions = new Set(migrationStatus.rows.map((row) => row.version));
 
     baseline = (await client.query(
-      "select (select count(*)::integer from public.games) as games, (select count(*)::integer from public.game_participants) as seats",
+      "select (select count(*)::integer from public.games) as games, (select count(*)::integer from public.game_participants) as seats, (select count(*)::integer from public.players) as players, (select count(*)::integer from public.member_decks) as decks, (select count(*)::integer from public.commanders) as commanders",
     )).rows[0];
+    const originalMoxfieldSnapshot = await readMoxfieldSnapshot(client);
 
     await client.query("begin");
     transactionOpen = true;
@@ -75,6 +86,16 @@ async function main() {
     assert(adminMapping.length === 1, "Expected the approved Will administrator mapping to exist.");
     const authUserId = adminMapping[0].auth_user_id;
     const willPlayerId = adminMapping[0].player_id;
+    const manfredPlayerId = (await client.query(
+      "select id from public.players where historical_player_key = $1",
+      ["manfred"],
+    )).rows[0]?.id;
+    assert(manfredPlayerId, "The member record needed for the ownership rejection test is missing.");
+    const willDeckId = (await client.query(
+      "select id from public.member_decks where owner_player_id = $1 order by historical_deck_key limit 1",
+      [willPlayerId],
+    )).rows[0]?.id;
+    assert(willDeckId, "The member deck needed for the owner update test is missing.");
     const commanderRows = (await client.query("select id from public.commanders order by historical_commander_key limit 4")).rows;
     assert(commanderRows.length >= 3, "At least three existing commanders are required for the rollback-only game test.");
     const newCommanderForWill = (await client.query(
@@ -94,6 +115,30 @@ async function main() {
 
     const ownContext = (await client.query("select public.current_member_context() as context")).rows[0].context;
     assert(ownContext?.playerId === willPlayerId && ownContext?.role === "member" && ownContext?.approvalStatus === "approved", "The approved member context was not restricted to the mapped caller.");
+
+    const ownPlayerLink = await client.query(
+      "update public.players set moxfield_url = $1 where id = $2 returning id",
+      ["https://www.moxfield.com/users/rollback-only-audit", willPlayerId],
+    );
+    const ownDeckLink = await client.query(
+      "update public.member_decks set moxfield_url = $1 where id = $2 returning id",
+      ["https://www.moxfield.com/decks/rollback-only-audit", willDeckId],
+    );
+    assert(ownPlayerLink.rowCount === 1 && ownDeckLink.rowCount === 1, "An approved member could not update their own profile and deck links.");
+    const otherPlayerLink = await client.query(
+      "update public.players set moxfield_url = $1 where id = $2 returning id",
+      ["https://www.moxfield.com/users/unauthorized-audit", manfredPlayerId],
+    );
+    const otherDeckLink = await client.query(
+      "update public.member_decks set moxfield_url = $1 where owner_player_id = $2 returning id",
+      ["https://www.moxfield.com/decks/unauthorized-audit", manfredPlayerId],
+    );
+    assert(otherPlayerLink.rowCount === 0 && otherDeckLink.rowCount === 0, "An approved member changed another member's profile or deck link.");
+    await expectSqlError(client, "42501", "Member edits to player identity fields", () => client.query(
+      "update public.players set display_name = 'Unauthorized identity change' where id = $1",
+      [willPlayerId],
+    ));
+    console.log("Approved member can update only their own profile/deck links: passed.");
 
     await expectSqlError(client, "42501", "Direct authenticated game writes", () => client.query(
       "insert into public.games (played_on, game_number_on_date, pod_size, member_count, result_type, winning_seat, source, date_origin) values (current_date, 1, 3, 1, 'single_winner', 1, 'manual', 'manual')",
@@ -197,6 +242,17 @@ async function main() {
     await client.query("set local role authenticated");
     const adminContext = (await client.query("select public.current_member_context() as context")).rows[0].context;
     assert(adminContext?.role === "admin" && adminContext?.playerId === willPlayerId, "The approved administrator mapping was not returned correctly.");
+    const adminPlayerLink = await client.query(
+      "update public.players set moxfield_url = $1 where id = $2 returning id",
+      ["https://www.moxfield.com/users/admin-rollback-audit", manfredPlayerId],
+    );
+    const adminDeckLink = await client.query(
+      "update public.member_decks set moxfield_url = $1 where id = $2 returning id",
+      ["https://www.moxfield.com/decks/admin-rollback-audit", manfredDeck.id],
+    );
+    assert(adminPlayerLink.rowCount === 1, "An approved administrator could not update another member's profile link.");
+    assert(adminDeckLink.rowCount === 1, "An approved administrator could not update another member's deck link.");
+    console.log("Approved administrator Moxfield access: passed.");
     const corrected = (await client.query(
       "select * from public.correct_completed_game($1, $2::date, $3, $4, $5, $6::smallint, $7)",
       [created.game_id, playedOn, "Corrected in rollback-only test", "Correction audit before delete.", "single_winner", 3, "Rollback-only correction audit verification"],
@@ -224,10 +280,11 @@ async function main() {
     await client.query("rollback");
     transactionOpen = false;
     const after = (await client.query(
-      "select (select count(*)::integer from public.games) as games, (select count(*)::integer from public.game_participants) as seats",
+      "select (select count(*)::integer from public.games) as games, (select count(*)::integer from public.game_participants) as seats, (select count(*)::integer from public.players) as players, (select count(*)::integer from public.member_decks) as decks, (select count(*)::integer from public.commanders) as commanders",
     )).rows[0];
-    assert(after.games === baseline.games && after.seats === baseline.seats, "Rollback-only test changed the hosted game history.");
-    console.log("Rollback check: no test games, seats, role changes, or audit rows remain.");
+    assert(Object.keys(baseline).every((key) => after[key] === baseline[key]), "Rollback-only test changed hosted records.");
+    assert(await readMoxfieldSnapshot(client) === originalMoxfieldSnapshot, "Rollback-only test changed an existing member or deck URL.");
+    console.log("Rollback check: no test games, seats, profile links, role changes, decks, commanders, or audit rows remain.");
     console.log("Authorization and transaction tests completed against the expected Supabase project.");
   } finally {
     if (transactionOpen) await client.query("rollback").catch(() => {});
